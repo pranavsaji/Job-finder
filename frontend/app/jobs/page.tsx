@@ -47,7 +47,7 @@ const DEFAULT_FILTERS: FilterState = {
 };
 
 const POST_PLATFORMS = ["linkedin", "twitter", "reddit", "hn"];
-const LISTING_PLATFORMS = ["remoteok", "yc", "wellfound"];
+const LISTING_PLATFORMS = ["remoteok", "yc", "wellfound", "jobboards"];
 const FUNDED_PLATFORMS = ["funded"];
 
 function getCategoryPlatforms(cat: string): string[] {
@@ -333,7 +333,13 @@ function JobsPageContent() {
     setScraping(true);
     setShowScrapePanel(false);
     const cfg = scrapePanelConfig[activeCategory];
-    toast.loading(cfg.toastMsg, { id: "scrape" });
+    const selectedLabels = scrapePlatforms
+      .map((id) => cfg.platforms.find((p) => p.id === id)?.label ?? id)
+      .join(", ");
+    const dynamicToast = selectedLabels
+      ? `Pulling from: ${selectedLabels}...`
+      : cfg.toastMsg;
+    toast.loading(dynamicToast, { id: "scrape" });
     try {
       const response = await jobsApi.scrape({
         roles: finalRoles,
