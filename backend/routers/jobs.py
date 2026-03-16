@@ -54,10 +54,11 @@ async def list_jobs(
         query = query.filter(Job.platform == platform)
 
     if date_from:
-        query = query.filter(Job.posted_at >= date_from)
+        # Use scraped_at as the reliable timestamp; posted_at from snippets is often wrong
+        query = query.filter(Job.scraped_at >= date_from)
 
     if date_to:
-        query = query.filter(Job.posted_at <= date_to)
+        query = query.filter(Job.scraped_at <= date_to)
 
     if status_filter:
         query = query.filter(Job.status == status_filter)

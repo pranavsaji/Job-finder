@@ -98,14 +98,16 @@ def _search_hiring_posts_sync(
     posts = []
     country_q = f' "{country}"' if country else ""
 
-    # Varied queries to maximize coverage of personal hiring announcements
+    # Varied queries — mix strict site: with broader fallbacks for server IPs
     queries = [
         f'site:linkedin.com/posts "my team is hiring" "{role}"{country_q}',
         f'site:linkedin.com/posts "we are hiring" "{role}"{country_q}',
-        f'site:linkedin.com/posts "we\'re hiring" "{role}"{country_q}',
-        f'site:linkedin.com/posts "looking for a" "{role}" ("dm me" OR "reach out" OR "apply"){country_q}',
-        f'site:linkedin.com/posts "open role" "{role}"{country_q}',
-        f'site:linkedin.com/posts "join my team" "{role}"{country_q}',
+        f'site:linkedin.com/posts "hiring" "{role}" "apply"{country_q}',
+        f'linkedin.com "we are hiring" "{role}" (manager OR director OR founder OR CTO){country_q}',
+        f'linkedin.com "my team is hiring" "{role}"{country_q}',
+        f'"{role}" hiring 2025 OR 2026 site:linkedin.com{country_q}',
+        f'linkedin "open role" "{role}" "dm" OR "reach out"{country_q}',
+        f'"{role}" "we\'re hiring" linkedin{country_q}',
     ]
 
     seen_urls: set = set()
@@ -114,10 +116,10 @@ def _search_hiring_posts_sync(
         results = _ddgs_search(query, max_results=per_query, timelimit=timelimit)
         for r in results:
             url = r.get("href", "")
-            # Only accept linkedin.com/posts URLs, not job listings or profiles
-            if not url or "linkedin.com/posts" not in url:
+            if not url or "linkedin.com" not in url:
                 continue
-            if "/jobs/" in url or "linkedin.com/job" in url:
+            # Skip job board listings and company pages — we want personal posts
+            if any(skip in url for skip in ["/jobs/", "/job/", "linkedin.com/jobs", "/company/"]):
                 continue
             if url in seen_urls:
                 continue

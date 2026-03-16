@@ -1,6 +1,6 @@
 import httpx
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 
@@ -39,6 +39,14 @@ async def _scrape_who_is_hiring(roles: list, date_from: Optional[datetime] = Non
     """Find current 'Who is Hiring' thread and search for roles."""
     jobs = []
 
+    # Only look at threads from the last 90 days so we never pull 2020/2021 threads
+    cutoff_90d = int((datetime.now(timezone.utc) - timedelta(days=90)).timestamp())
+    # Effective comment cutoff: the caller's date_from or 90 days ago, whichever is more recent
+    comment_cutoff = max(
+        int(date_from.timestamp()) if date_from else cutoff_90d,
+        cutoff_90d,
+    )
+
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(
@@ -47,6 +55,7 @@ async def _scrape_who_is_hiring(roles: list, date_from: Optional[datetime] = Non
                     "query": "Ask HN: Who is hiring",
                     "tags": "story,ask_hn",
                     "hitsPerPage": 5,
+                    "numericFilters": f"created_at_i>{cutoff_90d}",
                 },
             )
 
@@ -54,7 +63,8 @@ async def _scrape_who_is_hiring(roles: list, date_from: Optional[datetime] = Non
                 return jobs
 
             data = response.json()
-            hits = data.get("hits", [])
+            # Sort by most recent first
+            hits = sorted(data.get("hits", []), key=lambda h: h.get("created_at_i", 0), reverse=True)
 
             for hit in hits[:2]:
                 story_id = hit.get("objectID")
@@ -66,6 +76,7 @@ async def _scrape_who_is_hiring(roles: list, date_from: Optional[datetime] = Non
                     params={
                         "tags": f"comment,story_{story_id}",
                         "hitsPerPage": 100,
+                        "numericFilters": f"created_at_i>{comment_cutoff}",
                     },
                 )
 

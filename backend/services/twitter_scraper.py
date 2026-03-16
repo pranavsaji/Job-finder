@@ -90,6 +90,8 @@ def _search_twitter_posts_sync(
         f'site:twitter.com "my team is hiring" "{role}"{country_q}',
         f'site:twitter.com "hiring" "{role}" ("dm me" OR "apply" OR "join us"){country_q}',
         f'site:x.com "we are hiring" "{role}"{country_q}',
+        f'twitter.com "hiring" "{role}" 2025 OR 2026{country_q}',
+        f'x.com "we\'re hiring" "{role}"{country_q}',
     ]
 
     seen_urls: set = set()
@@ -104,9 +106,11 @@ def _search_twitter_posts_sync(
             url = url.replace("https://x.com/", "https://twitter.com/")
             if "twitter.com" not in url and "x.com" not in url:
                 continue
-            # Only accept tweet URLs (have /status/ in them)
-            if "/status/" not in url:
-                continue
+            # Accept tweet URLs and profile-level hiring posts
+            if "/status/" not in url and "/search" not in url:
+                # Still require at least a username path to avoid twitter home
+                if url.rstrip("/") in ("https://twitter.com", "https://x.com"):
+                    continue
             if url in seen_urls:
                 continue
             seen_urls.add(url)
