@@ -30,6 +30,11 @@ class ProfileUpdateRequest(BaseModel):
     hunter_api_key: Optional[str] = None
 
 
+class LinkedInCredentialsRequest(BaseModel):
+    email: str
+    password: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str
@@ -103,3 +108,77 @@ async def update_profile(
     db.commit()
     db.refresh(current_user)
     return current_user.to_dict()
+
+
+@router.post("/linkedin-credentials")
+async def save_linkedin_credentials(
+    payload: LinkedInCredentialsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save LinkedIn credentials (password is Fernet-encrypted before storage)."""
+    from backend.services.linkedin_auth_scraper import encrypt_password
+    try:
+        enc = encrypt_password(payload.password)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Encryption error: {e}")
+
+    prefs = dict(current_user.scraping_preferences or {})
+    prefs["linkedin_email"] = payload.email
+    prefs["linkedin_password_enc"] = enc
+    current_user.scraping_preferences = prefs
+    db.commit()
+    return {"message": "LinkedIn credentials saved"}
+
+
+@router.delete("/linkedin-credentials")
+async def remove_linkedin_credentials(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove stored LinkedIn credentials and clear cached session."""
+    from backend.services.linkedin_auth_scraper import clear_session
+    prefs = dict(current_user.scraping_preferences or {})
+    prefs.pop("linkedin_email", None)
+    prefs.pop("linkedin_password_enc", None)
+    current_user.scraping_preferences = prefs
+    db.commit()
+    clear_session()
+    return {"message": "LinkedIn credentials removed"}
+
+
+@router.get("/linkedin-credentials/status")
+async def linkedin_credentials_status(current_user: User = Depends(get_current_user)):
+    """Returns whether LinkedIn credentials are saved (never returns the password)."""
+    prefs = current_user.scraping_preferences or {}
+    return {
+        "has_credentials": bool(prefs.get("linkedin_email") and prefs.get("linkedin_password_enc")),
+        "email": prefs.get("linkedin_email"),
+    }
+
+
+@router.post("/linkedin-credentials/test")
+async def test_linkedin_credentials(
+    current_user: User = Depends(get_current_user),
+):
+    """Test the saved LinkedIn credentials by attempting a login."""
+    from backend.services.linkedin_auth_scraper import scrape_linkedin_authenticated, decrypt_password
+    prefs = current_user.scraping_preferences or {}
+    email = prefs.get("linkedin_email")
+    enc = prefs.get("linkedin_password_enc")
+    if not email or not enc:
+        raise HTTPException(status_code=400, detail="No credentials saved")
+    try:
+        password = decrypt_password(enc)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to decrypt credentials")
+
+    result = await scrape_linkedin_authenticated(
+        email=email, password=password,
+        roles=["software engineer"], limit_per_platform=3, date_preset="7d",
+    )
+    return {
+        "status": result["status"],
+        "message": result["message"],
+        "sample_count": len(result["jobs"]),
+    }

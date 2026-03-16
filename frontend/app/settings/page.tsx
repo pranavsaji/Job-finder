@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Settings, Key, Target, User, Save, X, Plus } from "lucide-react";
+import { Settings, Key, Target, User, Save, X, Plus, Linkedin, AlertTriangle, CheckCircle2, Loader2, Trash2 } from "lucide-react";
 import { authApi, setAuthToken } from "@/lib/api";
+import axios from "axios";
 import toast from "react-hot-toast";
 
 interface UserProfile {
@@ -20,8 +21,18 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<"account" | "roles" | "api">("account");
 
+  // LinkedIn credentials
+  const [liEmail, setLiEmail] = useState("");
+  const [liPassword, setLiPassword] = useState("");
+  const [liSaved, setLiSaved] = useState(false);
+  const [liSavedEmail, setLiSavedEmail] = useState("");
+  const [liSaving, setLiSaving] = useState(false);
+  const [liTesting, setLiTesting] = useState(false);
+  const [liTestResult, setLiTestResult] = useState<{status: string; message: string} | null>(null);
+
   useEffect(() => {
     loadProfile();
+    loadLiStatus();
   }, []);
 
   async function loadProfile() {
@@ -36,6 +47,66 @@ export default function SettingsPage() {
       // Not logged in
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadLiStatus() {
+    try {
+      const token = localStorage.getItem("jif_token");
+      const r = await axios.get(`${process.env.NEXT_PUBLIC_API_URL}/auth/linkedin-credentials/status`,
+        { headers: { Authorization: `Bearer ${token}` } });
+      setLiSaved(r.data.has_credentials);
+      setLiSavedEmail(r.data.email || "");
+    } catch {}
+  }
+
+  async function saveLiCredentials() {
+    if (!liEmail || !liPassword) return toast.error("Enter both email and password");
+    setLiSaving(true);
+    setLiTestResult(null);
+    try {
+      const token = localStorage.getItem("jif_token");
+      await axios.post(`${process.env.NEXT_PUBLIC_API_URL}/auth/linkedin-credentials`,
+        { email: liEmail, password: liPassword },
+        { headers: { Authorization: `Bearer ${token}` } });
+      setLiSaved(true);
+      setLiSavedEmail(liEmail);
+      setLiEmail("");
+      setLiPassword("");
+      toast.success("LinkedIn credentials saved (encrypted)");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save credentials");
+    } finally {
+      setLiSaving(false);
+    }
+  }
+
+  async function removeLiCredentials() {
+    try {
+      const token = localStorage.getItem("jif_token");
+      await axios.delete(`${process.env.NEXT_PUBLIC_API_URL}/auth/linkedin-credentials`,
+        { headers: { Authorization: `Bearer ${token}` } });
+      setLiSaved(false);
+      setLiSavedEmail("");
+      setLiTestResult(null);
+      toast.success("LinkedIn credentials removed");
+    } catch {
+      toast.error("Failed to remove credentials");
+    }
+  }
+
+  async function testLiCredentials() {
+    setLiTesting(true);
+    setLiTestResult(null);
+    try {
+      const token = localStorage.getItem("jif_token");
+      const r = await axios.post(`${process.env.NEXT_PUBLIC_API_URL}/auth/linkedin-credentials/test`,
+        {}, { headers: { Authorization: `Bearer ${token}` }, timeout: 60000 });
+      setLiTestResult({ status: r.data.status, message: r.data.message });
+    } catch (e: any) {
+      setLiTestResult({ status: "error", message: e?.response?.data?.detail || "Test failed" });
+    } finally {
+      setLiTesting(false);
     }
   }
 
@@ -249,6 +320,99 @@ export default function SettingsPage() {
                     <Save size={15} />
                     {saving ? "Saving..." : "Save API Keys"}
                   </button>
+
+                  {/* LinkedIn Authenticated Session */}
+                  <div className="mt-6 space-y-4">
+                    <div>
+                      <h3 className="text-white/80 text-sm font-semibold flex items-center gap-2">
+                        <Linkedin size={16} className="text-[#0A66C2]" />
+                        LinkedIn Authenticated Scraping
+                      </h3>
+                      <p className="text-white/35 text-xs mt-1">
+                        Use your LinkedIn account to get real posts with dates, poster names, and content.
+                        Supplements the DDG-based LinkedIn search.
+                      </p>
+                    </div>
+
+                    {/* Risk warning */}
+                    <div className="rounded-xl p-3 flex gap-3" style={{ background: "rgba(245, 158, 11, 0.08)", border: "1px solid rgba(245, 158, 11, 0.25)" }}>
+                      <AlertTriangle size={15} className="text-amber-400 mt-0.5 shrink-0" />
+                      <p className="text-amber-300/80 text-xs leading-relaxed">
+                        <strong>Risk:</strong> LinkedIn may detect automated logins and send a verification email or temporarily restrict your account.
+                        We minimise this by caching your session (re-login every ~20h) and adding human-like delays.
+                        Use a secondary account if you want extra safety.
+                      </p>
+                    </div>
+
+                    {liSaved ? (
+                      <div className="space-y-3">
+                        <div className="rounded-xl p-3 flex items-center gap-3" style={{ background: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.2)" }}>
+                          <CheckCircle2 size={15} className="text-green-400 shrink-0" />
+                          <div className="flex-1">
+                            <p className="text-green-300 text-xs font-medium">Credentials saved</p>
+                            <p className="text-white/35 text-xs">{liSavedEmail}</p>
+                          </div>
+                          <button onClick={removeLiCredentials} className="text-red-400/70 hover:text-red-400 transition-colors">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+
+                        {liTestResult && (
+                          <div className={`rounded-xl p-3 text-xs ${liTestResult.status === "ok" ? "text-green-300" : "text-amber-300"}`}
+                            style={{ background: liTestResult.status === "ok" ? "rgba(34,197,94,0.07)" : "rgba(245,158,11,0.07)",
+                                     border: `1px solid ${liTestResult.status === "ok" ? "rgba(34,197,94,0.2)" : "rgba(245,158,11,0.25)"}` }}>
+                            <strong>{liTestResult.status === "ok" ? "✅ Login successful" : liTestResult.status === "captcha" ? "⚠️ CAPTCHA required" : "❌ Failed"}</strong>
+                            <br />
+                            {liTestResult.message}
+                          </div>
+                        )}
+
+                        <button
+                          onClick={testLiCredentials}
+                          disabled={liTesting}
+                          className="btn-secondary flex items-center gap-2 text-sm"
+                          style={{ padding: "8px 16px" }}
+                        >
+                          {liTesting ? <Loader2 size={14} className="animate-spin" /> : <Linkedin size={14} />}
+                          {liTesting ? "Testing login..." : "Test Login"}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div>
+                          <label className="text-white/50 text-xs mb-1.5 block">LinkedIn Email</label>
+                          <input
+                            type="email"
+                            value={liEmail}
+                            onChange={(e) => setLiEmail(e.target.value)}
+                            placeholder="your@email.com"
+                            className="input-field"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-white/50 text-xs mb-1.5 block">LinkedIn Password</label>
+                          <input
+                            type="password"
+                            value={liPassword}
+                            onChange={(e) => setLiPassword(e.target.value)}
+                            placeholder="Your LinkedIn password"
+                            className="input-field"
+                          />
+                          <p className="text-white/25 text-xs mt-1">
+                            Password is encrypted with Fernet before being stored. Never logged or shared.
+                          </p>
+                        </div>
+                        <button
+                          onClick={saveLiCredentials}
+                          disabled={liSaving || !liEmail || !liPassword}
+                          className="btn-primary flex items-center gap-2"
+                        >
+                          {liSaving ? <Loader2 size={14} className="animate-spin" /> : <Linkedin size={14} />}
+                          {liSaving ? "Saving..." : "Save LinkedIn Credentials"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </motion.div>

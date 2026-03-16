@@ -124,6 +124,37 @@ async def trigger_scrape_sync(
         date_preset=payload.date_preset,
     )
 
+    # Supplement with LinkedIn authenticated scraper if user has saved credentials
+    # and linkedin is in the requested platforms (or all platforms requested)
+    wants_linkedin = (
+        not payload.platforms or "linkedin" in (payload.platforms or [])
+    )
+    prefs = current_user.scraping_preferences or {}
+    li_email = prefs.get("linkedin_email")
+    li_enc = prefs.get("linkedin_password_enc")
+    if wants_linkedin and li_email and li_enc:
+        try:
+            from backend.services.linkedin_auth_scraper import scrape_linkedin_authenticated, decrypt_password
+            password = decrypt_password(li_enc)
+            li_result = await scrape_linkedin_authenticated(
+                email=li_email,
+                password=password,
+                roles=payload.roles,
+                country=payload.country,
+                date_from=payload.date_from,
+                date_to=payload.date_to,
+                limit_per_platform=payload.limit_per_platform,
+                date_preset=payload.date_preset,
+            )
+            if li_result["status"] == "ok":
+                # Mark as linkedin_auth to distinguish from DDG-based linkedin
+                for j in li_result["jobs"]:
+                    j["platform"] = "linkedin"
+                    j["_source"] = "authenticated"
+                jobs_data = li_result["jobs"] + jobs_data
+        except Exception as e:
+            print(f"LinkedIn auth scrape error: {e}")
+
     saved_jobs = []
     for job_data in jobs_data:
         existing = db.query(Job).filter(Job.post_url == job_data["post_url"]).first()
