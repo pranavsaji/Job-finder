@@ -77,13 +77,13 @@ export default function EmailFinder({ person, company, onEmailFound, compact }: 
 
   function smtpIcon(candidate: EmailCandidate) {
     if (candidate.smtp_ok === true) {
-      return <CheckCircle size={12} className="text-emerald-400 flex-shrink-0" title="SMTP verified" />;
+      return <CheckCircle size={12} className="text-emerald-400 flex-shrink-0" aria-label="SMTP verified" />;
     }
     if (candidate.smtp_ok === false) {
-      return <XCircle size={12} className="text-red-400/60 flex-shrink-0" title="SMTP rejected" />;
+      return <XCircle size={12} className="text-red-400/60 flex-shrink-0" aria-label="SMTP rejected" />;
     }
     if (candidate.mx_ok === true) {
-      return <CheckCircle size={12} className="text-amber-400/70 flex-shrink-0" title="MX record exists" />;
+      return <CheckCircle size={12} className="text-amber-400/70 flex-shrink-0" aria-label="MX record exists" />;
     }
     return <Mail size={12} className="text-white/25 flex-shrink-0" />;
   }
