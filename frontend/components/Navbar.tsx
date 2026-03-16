@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Bell, User, LogOut, Settings } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Bell, LogOut, Settings } from "lucide-react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { authApi, setAuthToken, User as UserType } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
 export default function Navbar() {
   const [user, setUser] = useState<UserType | null>(null);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, right: 0 });
+  const avatarRef = useRef<HTMLButtonElement>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -38,7 +41,7 @@ export default function Navbar() {
   function handleLogout() {
     setAuthToken(null);
     setUser(null);
-    router.push("/login");
+    window.location.href = "/login";
   }
 
   function getInitials(name: string) {
@@ -74,7 +77,14 @@ export default function Navbar() {
         {user ? (
           <div className="relative">
             <button
-              onClick={() => setShowDropdown(!showDropdown)}
+              ref={avatarRef}
+              onClick={() => {
+                if (!showDropdown && avatarRef.current) {
+                  const rect = avatarRef.current.getBoundingClientRect();
+                  setDropdownPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+                }
+                setShowDropdown(!showDropdown);
+              }}
               className="flex items-center gap-2.5 p-1.5 pr-3 rounded-xl hover:bg-white/[0.06] transition-all"
             >
               <div
@@ -90,10 +100,14 @@ export default function Navbar() {
               </span>
             </button>
 
-            {showDropdown && (
+            {showDropdown && typeof document !== "undefined" && createPortal(
               <div
-                className="absolute right-0 top-12 w-48 rounded-xl py-1.5 z-50"
+                className="w-48 rounded-xl py-1.5"
                 style={{
+                  position: "fixed",
+                  top: dropdownPos.top,
+                  right: dropdownPos.right,
+                  zIndex: 9999,
                   background: "hsl(222, 47%, 10%)",
                   border: "1px solid rgba(255,255,255,0.08)",
                   boxShadow: "0 16px 40px rgba(0,0,0,0.5)",
@@ -118,7 +132,8 @@ export default function Navbar() {
                   <LogOut size={14} />
                   Sign Out
                 </button>
-              </div>
+              </div>,
+              document.body
             )}
           </div>
         ) : (
@@ -128,11 +143,9 @@ export default function Navbar() {
         )}
       </div>
 
-      {showDropdown && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setShowDropdown(false)}
-        />
+      {showDropdown && typeof document !== "undefined" && createPortal(
+        <div className="fixed inset-0" style={{ zIndex: 9998 }} onClick={() => setShowDropdown(false)} />,
+        document.body
       )}
     </nav>
   );

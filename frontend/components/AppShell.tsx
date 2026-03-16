@@ -1,18 +1,30 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import Sidebar from "@/components/Sidebar";
 
-const noLayoutPaths = ["/login", "/register", "/admin/login"];
+const publicPaths = ["/login", "/register", "/admin/login"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isAuthPage = noLayoutPaths.includes(pathname) || pathname.startsWith("/admin");
+  const router = useRouter();
+  const isPublic = publicPaths.includes(pathname) || pathname.startsWith("/admin");
+  const [authed, setAuthed] = useState<boolean | null>(null);
 
-  if (isAuthPage) {
-    return <>{children}</>;
-  }
+  useEffect(() => {
+    if (isPublic) { setAuthed(true); return; }
+    const token = localStorage.getItem("jif_token");
+    if (!token) {
+      router.replace("/login");
+    } else {
+      setAuthed(true);
+    }
+  }, [pathname, isPublic, router]);
+
+  if (isPublic) return <>{children}</>;
+  if (authed === null) return null; // brief blank while checking
 
   return (
     <div className="flex h-screen overflow-hidden">
