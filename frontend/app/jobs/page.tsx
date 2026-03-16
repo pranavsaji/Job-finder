@@ -477,11 +477,11 @@ function JobsPageContent() {
               {/* Roles */}
               <div>
                 <label className="text-white/50 text-xs mb-2 block">
-                  {activeCategory === "funded" ? "Industry / Sector" : "Target Roles"}{" "}
+                  {activeCategory === "funded" ? "Industry / Sector" : "Keywords / Roles"}{" "}
                   <span className="text-white/25">
                     {activeCategory === "funded"
                       ? "(optional - e.g. AI, Fintech, SaaS)"
-                      : "(type and press Enter or comma to add)"}
+                      : "(job title, skill, or any term — press Enter to add)"}
                   </span>
                 </label>
                 <div className="tag-input-container gap-2 min-h-[42px]">
@@ -518,10 +518,10 @@ function JobsPageContent() {
                       scrapeRoles.length === 0
                         ? activeCategory === "funded"
                           ? "e.g. AI, Fintech, SaaS, HealthTech..."
-                          : "e.g. Software Engineer, Product Manager..."
+                          : "e.g. Software Engineer, Python, AI researcher..."
                         : activeCategory === "funded"
                           ? "Add another sector..."
-                          : "Add another role..."
+                          : "Add another keyword..."
                     }
                     className="flex-1 bg-transparent outline-none text-white/80 text-sm placeholder:text-white/25 min-w-[160px]"
                   />
