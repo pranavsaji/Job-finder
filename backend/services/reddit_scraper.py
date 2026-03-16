@@ -16,12 +16,24 @@ TARGET_SUBREDDITS = [
     "webdev",
     "Python",
     "javascript",
+    "startups",
+    "entrepreneur",
+    "programming",
+    "typescript",
+    "reactjs",
+    "golang",
+    "rust",
 ]
 
 HEADERS = {
     "User-Agent": "JobInfoFinder/1.0 (job search aggregator)",
     "Accept": "application/json",
 }
+
+
+def _preset_to_reddit_t(date_preset: Optional[str]) -> str:
+    mapping = {"1h": "day", "24h": "day", "7d": "week", "30d": "month"}
+    return mapping.get(date_preset or "", "month")
 
 
 async def scrape_reddit_jobs(
@@ -35,13 +47,14 @@ async def scrape_reddit_jobs(
 ) -> list:
     """Scrape Reddit for job postings matching target roles."""
     all_jobs = []
-    target_subs = subreddits or TARGET_SUBREDDITS[:5]
+    target_subs = subreddits or TARGET_SUBREDDITS[:7]
+    reddit_t = _preset_to_reddit_t(date_preset)
 
     for subreddit in target_subs:
         for role in roles[:3]:
-            jobs = await _search_subreddit(subreddit, role, date_from, date_to)
+            jobs = await _search_subreddit(subreddit, role, date_from, date_to, t=reddit_t)
             all_jobs.extend(jobs)
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
 
     seen_ids = set()
     unique = []
@@ -59,6 +72,7 @@ async def _search_subreddit(
     role: str,
     date_from: Optional[datetime],
     date_to: Optional[datetime],
+    t: str = "month",
 ) -> list:
     """Search a specific subreddit for job posts."""
     jobs = []
@@ -69,8 +83,8 @@ async def _search_subreddit(
             "q": f"{role} hiring",
             "restrict_sr": "1",
             "sort": "new",
-            "limit": 25,
-            "t": "month",
+            "limit": 100,
+            "t": t,
         }
 
         async with httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True) as client:

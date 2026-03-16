@@ -41,18 +41,19 @@ async def scrape_linkedin_jobs(
     limit_per_platform: int = 10,
     date_preset: Optional[str] = None,
 ) -> list:
-    timelimit = _preset_to_timelimit(date_preset)
-    per_query = max(8, (limit_per_platform // 2) + 4)
+    # Don't pass timelimit to DDG for LinkedIn — DDG barely indexes recent LinkedIn posts
+    # so timelimit dramatically cuts results. We post-filter by date instead.
+    per_query = max(15, limit_per_platform + 5)
     all_posts = []
 
     tasks = []
-    for role in roles[:4]:
+    for role in roles[:6]:
         tasks.append(asyncio.get_event_loop().run_in_executor(
-            None, _search_hiring_posts_sync, role, country, timelimit, per_query
+            None, _search_hiring_posts_sync, role, country, None, per_query
         ))
     # Also run Google News RSS search in parallel
     tasks.append(asyncio.get_event_loop().run_in_executor(
-        None, _search_google_news_rss, roles[:3], country, date_from
+        None, _search_google_news_rss, roles[:4], country, date_from
     ))
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -69,6 +70,26 @@ async def scrape_linkedin_jobs(
             seen.add(uid)
             unique.append(post)
 
+    # Post-filter by date if requested (more reliable than DDG timelimit)
+    if date_from:
+        filtered = []
+        for post in unique:
+            pd = post.get("posted_at")
+            if pd is None:
+                filtered.append(post)  # keep unknowns — better to over-include
+                continue
+            try:
+                if isinstance(pd, str):
+                    pd = datetime.fromisoformat(pd)
+                if pd.tzinfo is None:
+                    pd = pd.replace(tzinfo=timezone.utc)
+                df = date_from if date_from.tzinfo else date_from.replace(tzinfo=timezone.utc)
+                if pd >= df:
+                    filtered.append(post)
+            except Exception:
+                filtered.append(post)
+        unique = filtered
+
     return unique[:limit_per_platform * 2]
 
 
@@ -83,15 +104,23 @@ def _search_hiring_posts_sync(
     year_q = " 2025 OR 2026"
 
     queries = [
-        # Broad hiring queries - no site: restriction so server IPs work
-        f'"software engineer" "we are hiring" "apply" linkedin{country_q}{year_q}',
-        f'"{role}" "my team is hiring" linkedin{country_q}{year_q}',
-        f'"{role}" "we\'re hiring" "join us" site:linkedin.com{country_q}',
+        # Direct LinkedIn post searches
         f'site:linkedin.com/posts "hiring" "{role}"{country_q}',
+        f'site:linkedin.com/posts "we are hiring" "{role}"{country_q}',
+        f'site:linkedin.com/posts "my team is hiring" "{role}"{country_q}',
+        f'site:linkedin.com/posts "looking for" "{role}"{country_q}',
+        # Broad hiring queries without site: (server IPs less likely to be blocked)
+        f'"{role}" "we are hiring" linkedin{country_q}{year_q}',
+        f'"{role}" "my team is hiring" linkedin{country_q}{year_q}',
+        f'"{role}" "we\'re hiring" "join us" linkedin{country_q}',
         f'"{role}" hiring "open role" linkedin "dm me" OR "reach out"{country_q}',
         f'linkedin.com "{role}" "we are hiring"{country_q}{year_q}',
-        f'"{role}" "now hiring" linkedin -job-listing{country_q}',
+        f'"{role}" "now hiring" linkedin{country_q}',
         f'"{role}" "actively hiring" linkedin{country_q}{year_q}',
+        f'"{role}" "excited to share" "hiring" linkedin{country_q}',
+        f'"{role}" "thrilled to announce" hiring linkedin{country_q}',
+        f'"{role}" "we just opened" OR "we\'ve opened" linkedin{country_q}',
+        f'site:linkedin.com "{role}" "apply now" OR "apply here" hiring{country_q}',
     ]
 
     seen_urls: set = set()

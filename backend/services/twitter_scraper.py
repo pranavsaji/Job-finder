@@ -39,16 +39,16 @@ async def scrape_twitter_jobs(
     date_preset: Optional[str] = None,
 ) -> list:
     """Search Twitter/X for hiring posts via DuckDuckGo site: search."""
-    timelimit = _preset_to_timelimit(date_preset)
-    per_query = max(5, (limit_per_platform // 2) + 2)
+    # Skip DDG timelimit — sparse indexing means timelimit kills results
+    per_query = max(15, limit_per_platform + 5)
     all_jobs = []
 
-    for role in roles[:3]:
+    for role in roles[:5]:
         jobs = await asyncio.get_event_loop().run_in_executor(
-            None, _search_twitter_posts_sync, role, country, timelimit, per_query
+            None, _search_twitter_posts_sync, role, country, None, per_query
         )
         all_jobs.extend(jobs)
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1.0)
 
     seen = set()
     unique = []
@@ -58,7 +58,27 @@ async def scrape_twitter_jobs(
             seen.add(uid)
             unique.append(job)
 
-    return unique
+    # Post-filter by date
+    if date_from:
+        filtered = []
+        for job in unique:
+            pd = job.get("posted_at")
+            if pd is None:
+                filtered.append(job)
+                continue
+            try:
+                if isinstance(pd, str):
+                    pd = datetime.fromisoformat(pd)
+                if pd.tzinfo is None:
+                    pd = pd.replace(tzinfo=timezone.utc)
+                df = date_from if date_from.tzinfo else date_from.replace(tzinfo=timezone.utc)
+                if pd >= df:
+                    filtered.append(job)
+            except Exception:
+                filtered.append(job)
+        unique = filtered
+
+    return unique[:limit_per_platform]
 
 
 def _search_twitter_posts_sync(
@@ -75,8 +95,14 @@ def _search_twitter_posts_sync(
         f'site:twitter.com "my team is hiring" "{role}"{country_q}',
         f'site:twitter.com "hiring" "{role}" ("dm me" OR "apply" OR "join us"){country_q}',
         f'site:x.com "we are hiring" "{role}"{country_q}',
+        f'site:x.com "my team is hiring" "{role}"{country_q}',
+        f'site:x.com "hiring" "{role}" ("apply" OR "join us"){country_q}',
         f'twitter.com "hiring" "{role}" 2025 OR 2026{country_q}',
         f'x.com "we\'re hiring" "{role}"{country_q}',
+        f'twitter.com "excited to announce" "hiring" "{role}"{country_q}',
+        f'x.com "looking for" "{role}" "apply"{country_q}',
+        f'twitter.com "open role" "{role}" hiring{country_q}',
+        f'x.com "now hiring" "{role}"{country_q}',
     ]
 
     seen_urls: set = set()
