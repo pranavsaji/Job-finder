@@ -19,29 +19,14 @@ from urllib.parse import quote_plus
 
 
 def _ddgs_search(query: str, max_results: int = 10, timelimit: Optional[str] = None) -> list:
-    import signal
-
-    def _timeout_handler(signum, frame):
-        raise TimeoutError("DDG search timed out")
-
     try:
         from ddgs import DDGS
-        ddgs = DDGS()
         kwargs = {"max_results": max_results}
         if timelimit:
             kwargs["timelimit"] = timelimit
-
-        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(15)
-        try:
-            results = list(ddgs.text(query, **kwargs))
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
+        ddgs = DDGS(timeout=15)
+        results = list(ddgs.text(query, **kwargs))
         return results
-    except TimeoutError:
-        print(f"DDG search timed out for '{query[:60]}'")
-        return []
     except Exception as e:
         print(f"DDG search error for '{query[:60]}': {e}")
         return []

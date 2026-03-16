@@ -1,50 +1,34 @@
 """
-LinkedIn personal hiring post scraper.
-Uses DDG (DuckDuckGo search) to find personal LinkedIn posts from hiring managers
-announcing open roles on their team.
+LinkedIn hiring post scraper.
+Multi-strategy approach: DDG with varied queries + Google News RSS fallback.
+Designed to work from server IPs where site:linkedin.com is often rate-limited.
 """
 
 import asyncio
 import re
 import time
+import httpx
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from urllib.parse import quote_plus
 
 
 def _ddgs_search(query: str, max_results: int = 10, timelimit: Optional[str] = None) -> list:
-    """Run a DuckDuckGo text search synchronously and return results."""
-    import signal
-
-    def _timeout_handler(signum, frame):
-        raise TimeoutError("DDG search timed out")
-
+    """Thread-safe DuckDuckGo search (no SIGALRM)."""
     try:
         from ddgs import DDGS
-        ddgs = DDGS()
         kwargs = {"max_results": max_results}
         if timelimit:
             kwargs["timelimit"] = timelimit
-
-        # Hard 15-second timeout per query to prevent hanging
-        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(15)
-        try:
-            results = list(ddgs.text(query, **kwargs))
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
+        ddgs = DDGS(timeout=15)
+        results = list(ddgs.text(query, **kwargs))
         return results
-    except TimeoutError:
-        print(f"DDG search timed out for '{query[:60]}'")
-        return []
     except Exception as e:
         print(f"DDG search error for '{query[:60]}': {e}")
         return []
 
 
 def _preset_to_timelimit(date_preset: Optional[str]) -> Optional[str]:
-    """Map date preset string to DDG timelimit: d=day, w=week, m=month."""
     mapping = {"1h": "d", "24h": "d", "7d": "w", "30d": "m"}
     return mapping.get(date_preset or "", None)
 
@@ -57,21 +41,24 @@ async def scrape_linkedin_jobs(
     limit_per_platform: int = 10,
     date_preset: Optional[str] = None,
 ) -> list:
-    """
-    Find LinkedIn personal hiring posts using DuckDuckGo site: search.
-    Returns posts from hiring managers announcing open roles on their team.
-    """
     timelimit = _preset_to_timelimit(date_preset)
-    # How many results to request per query — spread the limit across 6 query types
-    per_query = max(5, (limit_per_platform // 2) + 2)
+    per_query = max(8, (limit_per_platform // 2) + 4)
     all_posts = []
 
+    tasks = []
     for role in roles[:4]:
-        posts = await asyncio.get_event_loop().run_in_executor(
+        tasks.append(asyncio.get_event_loop().run_in_executor(
             None, _search_hiring_posts_sync, role, country, timelimit, per_query
-        )
-        all_posts.extend(posts)
-        await asyncio.sleep(1.5)
+        ))
+    # Also run Google News RSS search in parallel
+    tasks.append(asyncio.get_event_loop().run_in_executor(
+        None, _search_google_news_rss, roles[:3], country, date_from
+    ))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for r in results:
+        if isinstance(r, list):
+            all_posts.extend(r)
 
     # Deduplicate by URL
     seen = set()
@@ -82,7 +69,7 @@ async def scrape_linkedin_jobs(
             seen.add(uid)
             unique.append(post)
 
-    return unique
+    return unique[:limit_per_platform * 2]
 
 
 def _search_hiring_posts_sync(
@@ -91,35 +78,30 @@ def _search_hiring_posts_sync(
     timelimit: Optional[str] = None,
     per_query: int = 8,
 ) -> list:
-    """
-    Build multiple search queries targeting personal LinkedIn hiring posts
-    (not LinkedIn job listings).
-    """
     posts = []
     country_q = f' "{country}"' if country else ""
+    year_q = " 2025 OR 2026"
 
-    # Varied queries — mix strict site: with broader fallbacks for server IPs
     queries = [
-        f'site:linkedin.com/posts "my team is hiring" "{role}"{country_q}',
-        f'site:linkedin.com/posts "we are hiring" "{role}"{country_q}',
-        f'site:linkedin.com/posts "hiring" "{role}" "apply"{country_q}',
-        f'linkedin.com "we are hiring" "{role}" (manager OR director OR founder OR CTO){country_q}',
-        f'linkedin.com "my team is hiring" "{role}"{country_q}',
-        f'"{role}" hiring 2025 OR 2026 site:linkedin.com{country_q}',
-        f'linkedin "open role" "{role}" "dm" OR "reach out"{country_q}',
-        f'"{role}" "we\'re hiring" linkedin{country_q}',
+        # Broad hiring queries - no site: restriction so server IPs work
+        f'"software engineer" "we are hiring" "apply" linkedin{country_q}{year_q}',
+        f'"{role}" "my team is hiring" linkedin{country_q}{year_q}',
+        f'"{role}" "we\'re hiring" "join us" site:linkedin.com{country_q}',
+        f'site:linkedin.com/posts "hiring" "{role}"{country_q}',
+        f'"{role}" hiring "open role" linkedin "dm me" OR "reach out"{country_q}',
+        f'linkedin.com "{role}" "we are hiring"{country_q}{year_q}',
+        f'"{role}" "now hiring" linkedin -job-listing{country_q}',
+        f'"{role}" "actively hiring" linkedin{country_q}{year_q}',
     ]
 
     seen_urls: set = set()
-
     for query in queries:
         results = _ddgs_search(query, max_results=per_query, timelimit=timelimit)
         for r in results:
             url = r.get("href", "")
             if not url or "linkedin.com" not in url:
                 continue
-            # Skip job board listings and company pages — we want personal posts
-            if any(skip in url for skip in ["/jobs/", "/job/", "linkedin.com/jobs", "/company/"]):
+            if any(skip in url for skip in ["/jobs/", "/job/", "/company/"]):
                 continue
             if url in seen_urls:
                 continue
@@ -129,12 +111,7 @@ def _search_hiring_posts_sync(
             body = r.get("body", "")
             combined = f"{title} {body}"
 
-            # Skip if this looks like a job board aggregator or company career page
-            if any(skip in url.lower() for skip in ["jobs.", "careers.", "job-listing"]):
-                continue
-
             poster_name, poster_title = _parse_poster_from_title(title)
-
             posts.append({
                 "title": _extract_role_from_post(combined, role),
                 "company": _extract_company(combined),
@@ -153,36 +130,93 @@ def _search_hiring_posts_sync(
                 "matched_role": role,
                 "salary_range": _extract_salary(combined),
             })
+        time.sleep(0.5)
 
-        # Avoid hitting DDG rate limits between queries
-        time.sleep(0.8)
+    return posts
+
+
+def _search_google_news_rss(roles: list, country: Optional[str], date_from: Optional[datetime]) -> list:
+    """Fetch hiring posts from Google News RSS — free, no API key, works from servers."""
+    posts = []
+    country_q = f" {country}" if country else " United States"
+
+    for role in roles[:2]:
+        try:
+            q = quote_plus(f'"{role}" hiring linkedin{country_q}')
+            url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+            resp = httpx.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            if resp.status_code != 200:
+                continue
+
+            # Parse RSS items
+            items = re.findall(r"<item>(.*?)</item>", resp.text, re.DOTALL)
+            for item in items[:15]:
+                title_m = re.search(r"<title><!\[CDATA\[(.*?)\]\]></title>", item)
+                link_m = re.search(r"<link>(.*?)</link>", item)
+                desc_m = re.search(r"<description><!\[CDATA\[(.*?)\]\]></description>", item)
+                date_m = re.search(r"<pubDate>(.*?)</pubDate>", item)
+
+                if not title_m or not link_m:
+                    continue
+
+                item_title = title_m.group(1).strip()
+                item_url = link_m.group(1).strip()
+                item_desc = desc_m.group(1).strip() if desc_m else ""
+                item_date_str = date_m.group(1).strip() if date_m else ""
+
+                # Parse date
+                posted_at = None
+                if item_date_str:
+                    try:
+                        posted_at = datetime.strptime(item_date_str, "%a, %d %b %Y %H:%M:%S %Z")
+                        posted_at = posted_at.replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        pass
+
+                if date_from and posted_at and posted_at < date_from:
+                    continue
+
+                # Clean HTML from description
+                item_desc = re.sub(r"<[^>]+>", " ", item_desc)
+                combined = f"{item_title} {item_desc}"
+
+                posts.append({
+                    "title": item_title[:120],
+                    "company": _extract_company(combined),
+                    "poster_name": None,
+                    "poster_title": None,
+                    "poster_profile_url": None,
+                    "poster_linkedin": None,
+                    "post_url": item_url,
+                    "platform": "linkedin",
+                    "post_content": combined[:2000],
+                    "posted_at": posted_at,
+                    "location": _extract_location(combined),
+                    "job_type": _extract_job_type(combined),
+                    "is_remote": "remote" in combined.lower(),
+                    "tags": [role] + _extract_skills(combined),
+                    "matched_role": role,
+                    "salary_range": _extract_salary(combined),
+                })
+        except Exception as e:
+            print(f"Google News RSS error: {e}")
+        time.sleep(0.5)
 
     return posts
 
 
 def _parse_poster_from_title(title: str) -> tuple:
-    """
-    LinkedIn Google result titles typically look like:
-    "John Smith on LinkedIn: 'My team is hiring...'"
-    "Jane Doe, CTO at Acme | LinkedIn: ..."
-    Extract name and title/company.
-    """
     name = None
     poster_title = None
-
-    # "Name on LinkedIn"
     m = re.match(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s+on\s+LinkedIn", title)
     if m:
         name = m.group(1).strip()
-
-    # "Name, Title at Company | LinkedIn"
-    m2 = re.match(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})[,\s\-]+(.+?)(?:\s*\||\s*-\s*LinkedIn|$)", title)
+    m2 = re.match(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})[,\s\-]+(.+?)(?:\s*\|\s*|\s*-\s*LinkedIn|$)", title)
     if m2 and not name:
         name = m2.group(1).strip()
         raw_title = re.sub(r"\s+on\s+LinkedIn.*$", "", m2.group(2).strip(), flags=re.IGNORECASE)
         if len(raw_title) < 100:
             poster_title = raw_title
-
     return name, poster_title
 
 
@@ -196,8 +230,7 @@ def _extract_role_from_post(text: str, fallback: str) -> str:
     patterns = [
         r"hiring\s+(?:a\s+|an\s+)?([A-Za-z][A-Za-z\s\/\-]+?)(?:\s+to\s|\s+for\s|\s+at\s|\s+who\s|[!.,\n])",
         r"looking for\s+(?:a\s+|an\s+)?([A-Za-z][A-Za-z\s\/\-]+?)(?:\s+to\s|\s+for\s|\s+at\s|[!.,\n])",
-        r"open\s+(?:role|position|headcount)\s+for\s+(?:a\s+)?([A-Za-z][A-Za-z\s\/\-]+?)(?:[!.,\n]|$)",
-        r"join\s+(?:my\s+|our\s+)?team\s+as\s+(?:a\s+|an\s+)?([A-Za-z][A-Za-z\s\/\-]+?)(?:[!.,\n]|$)",
+        r"open\s+(?:role|position)\s+for\s+(?:a\s+)?([A-Za-z][A-Za-z\s\/\-]+?)(?:[!.,\n]|$)",
     ]
     for pat in patterns:
         m = re.search(pat, text, re.IGNORECASE)
@@ -226,8 +259,7 @@ def _extract_company(text: str) -> Optional[str]:
 def _extract_location(text: str) -> Optional[str]:
     patterns = [
         r"\b(Remote(?:\s+[-\/]\s+[A-Za-z]+)?)\b",
-        r"\b([A-Z][a-z]+(?:,\s+[A-Z]{2})?)\b(?=\s+(?:area|based|office))",
-        r"\b(New York|San Francisco|London|Berlin|Austin|Seattle|Boston|Toronto|Singapore|Dubai|Bangalore|NYC|SF|LA)\b",
+        r"\b(New York|San Francisco|London|Berlin|Austin|Seattle|Boston|Toronto|Singapore|Dubai|Bangalore|NYC|SF|LA|Chicago|Miami|Denver)\b",
     ]
     for pat in patterns:
         m = re.search(pat, text, re.IGNORECASE)
@@ -266,12 +298,9 @@ def _extract_skills(text: str) -> list:
 
 
 def _parse_date_hint(text: str) -> Optional[str]:
-    """Parse a date hint from DDG snippet (e.g. 'Aug 24, 2023' or '2 days ago')."""
     if not text:
         return None
     now = datetime.now(timezone.utc)
-
-    # Try relative dates
     m = re.search(r"(\d+)\s*(hour|day|week|month)", text, re.IGNORECASE)
     if m:
         n = int(m.group(1))
@@ -284,8 +313,6 @@ def _parse_date_hint(text: str) -> Optional[str]:
             return (now - timedelta(weeks=n)).isoformat()
         if "month" in unit:
             return (now - timedelta(days=n * 30)).isoformat()
-
-    # Try absolute dates like "August 24, 2023"
     m2 = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},\s+\d{4}", text)
     if m2:
         try:
@@ -297,5 +324,4 @@ def _parse_date_hint(text: str) -> Optional[str]:
                 return dt.replace(tzinfo=timezone.utc).isoformat()
             except ValueError:
                 pass
-
     return None
