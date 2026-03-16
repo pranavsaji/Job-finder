@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from backend.models.database import create_tables
-from backend.routers import auth, jobs, resume, person, drafts, email_finder
+from backend.routers import auth, jobs, resume, person, drafts, email_finder, admin as admin_router
 
 CORS_ORIGINS = [
     "http://localhost:3000",
@@ -60,11 +60,59 @@ app.include_router(resume.router)
 app.include_router(person.router)
 app.include_router(drafts.router)
 app.include_router(email_finder.router)
+app.include_router(admin_router.router)
+
+
+def _migrate_db():
+    """Add any missing columns without Alembic (SQLite-safe)."""
+    from sqlalchemy import text
+    from backend.models.database import engine
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
+            conn.commit()
+            print("Migration applied: users.is_admin")
+        except Exception:
+            pass  # Column already exists
+
+
+def _seed_admin():
+    """Create the admin user from env vars if it doesn't exist yet."""
+    from passlib.context import CryptContext
+    from sqlalchemy.orm import Session
+    from backend.models.database import SessionLocal
+    from backend.models.user import User as _User
+
+    admin_email = os.getenv("ADMIN_EMAIL", "admin@jobfinder.local")
+    admin_password = os.getenv("ADMIN_PASSWORD", "changeme123")
+
+    pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    db: Session = SessionLocal()
+    try:
+        existing = db.query(_User).filter(_User.email == admin_email).first()
+        if not existing:
+            db.add(_User(
+                email=admin_email,
+                hashed_password=pwd.hash(admin_password),
+                name="Admin",
+                is_admin=True,
+                target_roles=[],
+            ))
+            db.commit()
+            print(f"Admin user created: {admin_email}")
+        elif not existing.is_admin:
+            existing.is_admin = True
+            db.commit()
+            print(f"Admin flag applied to: {admin_email}")
+    finally:
+        db.close()
 
 
 @app.on_event("startup")
 async def startup_event():
     create_tables()
+    _migrate_db()
+    _seed_admin()
     print("Database tables created.")
     print("Job Info Finder API is running.")
 

@@ -4,11 +4,11 @@ import { usePathname } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import Sidebar from "@/components/Sidebar";
 
-const noLayoutPaths = ["/login", "/register"];
+const noLayoutPaths = ["/login", "/register", "/admin/login"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isAuthPage = noLayoutPaths.includes(pathname);
+  const isAuthPage = noLayoutPaths.includes(pathname) || pathname.startsWith("/admin");
 
   if (isAuthPage) {
     return <>{children}</>;

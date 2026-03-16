@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Zap, Eye, EyeOff, Loader } from "lucide-react";
-import { authApi, setAuthToken } from "@/lib/api";
+import { Shield, Eye, EyeOff, Loader } from "lucide-react";
+import { authApi } from "@/lib/api";
 import toast from "react-hot-toast";
 
-export default function LoginPage() {
+export default function AdminLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -22,13 +22,17 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const response = await authApi.login(email, password);
-      setAuthToken(response.data.access_token);
-      localStorage.setItem("jif_user", JSON.stringify(response.data.user));
-      toast.success("Welcome back.");
-      router.push("/");
-    } catch (error: unknown) {
-      const msg = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Invalid email or password.";
-      toast.error(msg);
+      const user = response.data.user;
+      if (!user?.is_admin) {
+        toast.error("This account does not have admin privileges.");
+        return;
+      }
+      localStorage.setItem("jif_admin_token", response.data.access_token);
+      localStorage.setItem("jif_admin_user", JSON.stringify(user));
+      toast.success("Welcome, admin.");
+      router.push("/admin");
+    } catch {
+      toast.error("Invalid email or password.");
     } finally {
       setLoading(false);
     }
@@ -42,22 +46,21 @@ export default function LoginPage() {
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center"
             style={{
-              background: "linear-gradient(135deg, hsl(262, 83%, 58%) 0%, hsl(240, 83%, 65%) 100%)",
-              boxShadow: "0 4px 20px rgba(139, 92, 246, 0.5)",
+              background: "linear-gradient(135deg, hsl(0, 70%, 45%) 0%, hsl(20, 80%, 40%) 100%)",
+              boxShadow: "0 4px 20px rgba(180, 40, 40, 0.45)",
             }}
           >
-            <Zap size={20} className="text-white" />
+            <Shield size={20} className="text-white" />
           </div>
           <div>
-            <h1 className="text-white font-bold text-xl">Job Info Finder</h1>
-            <p className="text-white/35 text-xs">AI-powered job hunting</p>
+            <h1 className="text-white font-bold text-xl">Admin Panel</h1>
+            <p className="text-white/35 text-xs">Job Info Finder</p>
           </div>
         </div>
 
-        {/* Card */}
         <div className="glass-card p-8">
-          <h2 className="text-white font-semibold text-lg mb-1">Sign in</h2>
-          <p className="text-white/40 text-sm mb-6">Welcome back to your dashboard</p>
+          <h2 className="text-white font-semibold text-lg mb-1">Admin Sign In</h2>
+          <p className="text-white/40 text-sm mb-6">Restricted access — admins only</p>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
@@ -66,7 +69,7 @@ export default function LoginPage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
+                placeholder="admin@example.com"
                 className="input-field"
                 autoComplete="email"
               />
@@ -78,7 +81,7 @@ export default function LoginPage() {
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Your password"
+                  placeholder="Admin password"
                   className="input-field pr-10"
                   autoComplete="current-password"
                 />
@@ -94,16 +97,15 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="btn-primary w-full justify-center py-2.5"
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg font-medium text-sm text-white transition-opacity disabled:opacity-50"
+              style={{
+                background: "linear-gradient(135deg, hsl(0, 70%, 45%) 0%, hsl(20, 80%, 40%) 100%)",
+              }}
             >
-              {loading ? <Loader size={15} className="animate-spin" /> : null}
-              {loading ? "Signing in..." : "Sign In"}
+              {loading ? <Loader size={15} className="animate-spin" /> : <Shield size={15} />}
+              {loading ? "Signing in..." : "Sign In as Admin"}
             </button>
           </form>
-
-          <p className="text-white/35 text-xs text-center mt-6">
-            Access is by invitation only. Contact your administrator.
-          </p>
         </div>
       </div>
     </div>

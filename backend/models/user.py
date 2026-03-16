@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, JSON
+from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, Boolean
 from sqlalchemy.sql import func
 from backend.models.database import Base
 
@@ -10,6 +10,7 @@ class User(Base):
     email = Column(String(500), nullable=False, unique=True, index=True)
     hashed_password = Column(String(500), nullable=False)
     name = Column(String(500), nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     target_roles = Column(JSON, default=list)
     resume_text = Column(Text, nullable=True)
@@ -22,6 +23,7 @@ class User(Base):
             "id": self.id,
             "email": self.email,
             "name": self.name,
+            "is_admin": self.is_admin or False,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "target_roles": self.target_roles or [],
             "resume_filename": self.resume_filename,

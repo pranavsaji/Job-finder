@@ -160,6 +160,16 @@ export const draftsApi = {
   getForJob: (jobId: number) => getApi().get(`/drafts/${jobId}`),
 };
 
+// Admin API
+export const adminApi = {
+  listUsers: () => getApi().get("/admin/users"),
+
+  createUser: (data: { email: string; password: string; name: string }) =>
+    getApi().post("/admin/users", data),
+
+  deleteUser: (id: number) => getApi().delete(`/admin/users/${id}`),
+};
+
 // Email Finder API
 export const emailApi = {
   find: (data: {
@@ -228,6 +238,7 @@ export interface User {
   id: number;
   email: string;
   name: string;
+  is_admin: boolean;
   created_at: string | null;
   target_roles: string[];
   resume_filename: string | null;
