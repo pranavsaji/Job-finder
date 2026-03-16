@@ -30,6 +30,8 @@ async def scrape_reddit_jobs(
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     subreddits: Optional[list] = None,
+    limit_per_platform: int = 50,
+    date_preset: Optional[str] = None,
 ) -> list:
     """Scrape Reddit for job postings matching target roles."""
     all_jobs = []
@@ -229,9 +231,9 @@ def _extract_company(title: str, body: str) -> str:
         match = re.search(pattern, combined)
         if match:
             candidate = match.group(1).strip()
-            if 1 < len(candidate.split()) <= 5 and len(candidate) < 60:
+            if 1 <= len(candidate.split()) <= 5 and len(candidate) < 60:
                 return candidate
-    return "Unknown Company"
+    return None
 
 
 def _extract_job_type(text: str) -> Optional[str]:

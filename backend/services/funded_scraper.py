@@ -13,9 +13,20 @@ Purpose: find companies with fresh capital and extract:
 import asyncio
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from urllib.parse import quote_plus
+
+
+def _parse_tc_date(url: str) -> Optional[datetime]:
+    """Extract publish date from TechCrunch URL: /YYYY/MM/DD/"""
+    m = re.search(r"techcrunch\.com/(\d{4})/(\d{2})/(\d{2})/", url)
+    if m:
+        try:
+            return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return None
 
 
 def _ddgs_search(query: str, max_results: int = 10, timelimit: Optional[str] = None) -> list:
@@ -47,9 +58,11 @@ async def scrape_funded_companies(
     sector_hints = roles if roles else []
 
     per_query = max(5, (limit_per_platform // 2) + 2)
+    timelimit_map = {"1h": "d", "24h": "d", "7d": "w", "30d": "m"}
+    timelimit = timelimit_map.get(date_preset or "", "m")  # default: last month
     results = await asyncio.gather(
-        asyncio.get_event_loop().run_in_executor(None, _search_techcrunch_sync, sector_hints, country, per_query),
-        asyncio.get_event_loop().run_in_executor(None, _search_funding_news_sync, sector_hints, country, per_query),
+        asyncio.get_event_loop().run_in_executor(None, _search_techcrunch_sync, sector_hints, country, per_query, date_from, timelimit),
+        asyncio.get_event_loop().run_in_executor(None, _search_funding_news_sync, sector_hints, country, per_query, date_from, timelimit),
         return_exceptions=True,
     )
 
@@ -70,7 +83,8 @@ async def scrape_funded_companies(
     return unique[:25]
 
 
-def _search_techcrunch_sync(sectors: list, country: Optional[str], per_query: int = 8) -> list:
+def _search_techcrunch_sync(sectors: list, country: Optional[str], per_query: int = 8,
+                             date_from: Optional[datetime] = None, timelimit: Optional[str] = None) -> list:
     """Search TechCrunch for recent funding news via DDG."""
     companies = []
     country_q = f' "{country}"' if country else ""
@@ -89,10 +103,18 @@ def _search_techcrunch_sync(sectors: list, country: Optional[str], per_query: in
         ]
 
     for query in queries[:2]:
-        results = _ddgs_search(query, max_results=per_query)
+        results = _ddgs_search(query, max_results=per_query, timelimit=timelimit)
         for r in results:
             url = r.get("href", "")
             if "techcrunch.com" not in url:
+                continue
+
+            # Parse date from TC URL — skip if no date (sponsor/tag pages) or too old
+            posted_at = _parse_tc_date(url)
+            if not posted_at:
+                continue  # Skip sponsor/tag/category pages without a date
+            cutoff = date_from or (datetime.now(timezone.utc) - timedelta(days=90))
+            if posted_at < cutoff:
                 continue
 
             title = r.get("title", "")
@@ -127,7 +149,7 @@ def _search_techcrunch_sync(sectors: list, country: Optional[str], per_query: in
                 "post_url": url,
                 "platform": "funded",
                 "post_content": "\n".join(content_parts),
-                "posted_at": None,
+                "posted_at": posted_at,
                 "location": country or _extract_headquarters(combined),
                 "job_type": "full-time",
                 "is_remote": False,
@@ -141,7 +163,8 @@ def _search_techcrunch_sync(sectors: list, country: Optional[str], per_query: in
     return companies
 
 
-def _search_funding_news_sync(sectors: list, country: Optional[str], per_query: int = 8) -> list:
+def _search_funding_news_sync(sectors: list, country: Optional[str], per_query: int = 8,
+                               date_from: Optional[datetime] = None, timelimit: Optional[str] = None) -> list:
     """Search broader funding news via DDG."""
     companies = []
     country_q = f' "{country}"' if country else ""
@@ -159,12 +182,20 @@ def _search_funding_news_sync(sectors: list, country: Optional[str], per_query: 
             f'site:venturebeat.com "raises" "million" "series" 2025 OR 2026{country_q}',
         ]
 
+    cutoff = date_from or (datetime.now(timezone.utc) - timedelta(days=90))
+
     for query in queries[:2]:
-        results = _ddgs_search(query, max_results=per_query)
+        results = _ddgs_search(query, max_results=per_query, timelimit=timelimit)
         for r in results:
             url = r.get("href", "")
             if not url or url.startswith("https://www.linkedin.com/jobs"):
                 continue
+
+            # For TC URLs, require a parseable date and skip old ones
+            tc_date = _parse_tc_date(url)
+            if "techcrunch.com" in url:
+                if not tc_date or tc_date < cutoff:
+                    continue
 
             title = r.get("title", "")
             body = r.get("body", "")
@@ -203,7 +234,7 @@ def _search_funding_news_sync(sectors: list, country: Optional[str], per_query: 
                 "post_url": url,
                 "platform": "funded",
                 "post_content": "\n".join(content_parts),
-                "posted_at": None,
+                "posted_at": tc_date,
                 "location": country or _extract_headquarters(combined),
                 "job_type": "full-time",
                 "is_remote": False,
@@ -219,20 +250,27 @@ def _search_funding_news_sync(sectors: list, country: Optional[str], per_query: 
 
 def _extract_company_name(title: str, snippet: str) -> str:
     combined = title + " " + snippet
+    _NOISE = {"The", "A", "An", "Almost", "New", "Why", "How", "What", "When", "Latest",
+              "Top", "Best", "Big", "After", "Before", "Report", "US", "EU", "UK", "VC"}
     patterns = [
-        r"^([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)?)\s+(?:raises|raised|secures|closes|lands|bags)\s+\$",
-        r"([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)?)\s+(?:Series\s+[A-Z]|Seed|Pre-[Ss]eed)",
-        r"^([A-Z][A-Za-z0-9\s]{2,30}?)\s+(?:raises|is\s+hiring|just\s+raised)",
+        # "Rox.ai raises $5M" — may include dots/hyphens
+        r"^([A-Z][A-Za-z0-9\.\-]+(?:\s+[A-Z][A-Za-z0-9\.\-]+)?)\s+(?:raises|raised|secures|closes|lands|bags)\s+\$",
+        r"([A-Z][A-Za-z0-9\.\-]+(?:\s+[A-Z][A-Za-z0-9\.\-]+)?)\s+(?:Series\s+[A-Z]|Seed\s+round|Pre-[Ss]eed)",
+        # "startup XYZ raises" — after "startup" keyword
+        r"\bstartup\s+([A-Z][A-Za-z0-9\.\-]+(?:\s+[A-Z][A-Za-z0-9\.\-]+)?)\s+(?:raises|raised|lands|closes)",
     ]
     for pat in patterns:
         m = re.search(pat, combined)
         if m:
             name = m.group(1).strip()
-            if 1 <= len(name.split()) <= 4 and name not in ("The", "A", "An"):
+            if 1 <= len(name.split()) <= 4 and name not in _NOISE:
                 return name
-    m = re.match(r"^([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)?)", title)
+    # Last resort: first 1-2 capitalized words from title
+    m = re.match(r"^([A-Z][A-Za-z0-9\.\-]+(?:\s+[A-Z][A-Za-z0-9\.\-]+)?)", title)
     if m:
-        return m.group(1).strip()
+        name = m.group(1).strip()
+        if name not in _NOISE:
+            return name
     return "Funded Startup"
 
 

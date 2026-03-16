@@ -90,8 +90,9 @@ def _scrape_board_sync(role: str, country, timelimit, per_query: int = 8) -> lis
                 body = r.get("body", "")
                 combined = f"{title} {body}"
                 company = _extract_company_from_url(url, domain)
+                clean_title = _clean_job_title(title, role, company)
                 jobs.append({
-                    "title": title[:120] or f"{role} at {company}",
+                    "title": clean_title,
                     "company": company,
                     "poster_name": None,
                     "poster_title": "Hiring Manager",
@@ -113,14 +114,42 @@ def _scrape_board_sync(role: str, country, timelimit, per_query: int = 8) -> lis
     return jobs
 
 
+_SKIP_SLUGS = {"embed", "jobs", "apply", "search", "job", "careers", "listing", "board"}
+
+
 def _extract_company_from_url(url: str, domain: str) -> Optional[str]:
-    # Extract company slug from URL: boards.greenhouse.io/COMPANY/jobs/...
-    m = re.search(rf"{re.escape(domain)}/([^/?\s]+)", url)
+    # Extract company slug from URL path after domain
+    # e.g. boards.greenhouse.io/COMPANY/jobs/123 → COMPANY
+    #      boards.greenhouse.io/embed/job_app?for=COMPANY → use query param
+    path = url.split(domain, 1)[-1].lstrip("/")
+    segments = re.split(r"[/?#]", path)
+
+    # Try to find a non-generic segment
+    for seg in segments:
+        if seg and seg.lower() not in _SKIP_SLUGS and len(seg) > 1:
+            # Check if it looks like a company slug (not a numeric ID)
+            if not seg.isdigit():
+                return seg.replace("-", " ").replace("_", " ").title()
+
+    # Greenhouse embed URLs sometimes have ?for=COMPANY
+    m = re.search(r"[?&]for=([^&]+)", url)
     if m:
-        slug = m.group(1)
-        # Convert slug to readable name: my-company -> My Company
-        return slug.replace("-", " ").replace("_", " ").title()
+        return m.group(1).replace("-", " ").replace("_", " ").title()
+
     return None
+
+
+def _clean_job_title(title: str, role: str, company: Optional[str]) -> str:
+    """Strip verbose ATS prefixes and return a clean job title."""
+    # Remove Greenhouse-style "Job Application for X at Y"
+    m = re.match(r"Job Application (?:for\s+)?(.+?)(?:\s+at\s+.+)?$", title, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()[:120]
+    # Remove "Jobs at Company"
+    m2 = re.match(r"Jobs? at .+", title, re.IGNORECASE)
+    if m2 and company:
+        return f"{role.title()} at {company}"
+    return title[:120] if title else f"{role.title()} at {company or 'Company'}"
 
 
 def _extract_location(text: str) -> Optional[str]:

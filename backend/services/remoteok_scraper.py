@@ -14,6 +14,8 @@ async def scrape_remoteok_jobs(
     country: Optional[str] = None,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
+    limit_per_platform: int = 30,
+    date_preset: Optional[str] = None,
 ) -> list:
     """Fetch from RemoteOK public API and filter by role."""
     all_jobs = []
@@ -100,4 +102,4 @@ async def scrape_remoteok_jobs(
     except Exception as e:
         print(f"RemoteOK scrape error: {e}")
 
-    return all_jobs[:30]
+    return all_jobs[:limit_per_platform]

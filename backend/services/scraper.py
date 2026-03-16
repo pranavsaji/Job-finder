@@ -90,10 +90,18 @@ async def scrape_all(
                 enriched.append(job)
         all_jobs = enriched + all_jobs[20:]
 
-    all_jobs.sort(
-        key=lambda j: j.get("posted_at") or datetime.min.replace(tzinfo=timezone.utc),
-        reverse=True,
-    )
+    def _sort_key(j):
+        dt = j.get("posted_at")
+        if dt is None:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        if isinstance(dt, str):
+            try:
+                return datetime.fromisoformat(dt)
+            except Exception:
+                return datetime.min.replace(tzinfo=timezone.utc)
+        return dt
+
+    all_jobs.sort(key=_sort_key, reverse=True)
 
     return all_jobs
 

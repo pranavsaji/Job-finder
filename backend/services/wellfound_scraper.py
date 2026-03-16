@@ -1,25 +1,32 @@
 """
 Wellfound (AngelList) scraper.
-Uses the public Wellfound job search page - no auth required for browsing.
+Uses DDG site:wellfound.com search — no auth, no JS rendering needed.
 Wellfound is ideal because it shows the founder/hiring manager directly.
 """
 
-import httpx
 import asyncio
 import re
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
 from typing import Optional
-from bs4 import BeautifulSoup
 
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
+def _ddgs_search(query: str, max_results: int = 10, timelimit=None) -> list:
+    try:
+        from ddgs import DDGS
+        kwargs = {"max_results": max_results}
+        if timelimit:
+            kwargs["timelimit"] = timelimit
+        ddgs = DDGS(timeout=15)
+        return list(ddgs.text(query, **kwargs))
+    except Exception as e:
+        print(f"DDG search error for '{query[:60]}': {e}")
+        return []
+
+
+def _preset_to_timelimit(date_preset: Optional[str]) -> Optional[str]:
+    mapping = {"1h": "d", "24h": "d", "7d": "w", "30d": "m"}
+    return mapping.get(date_preset or "", None)
 
 
 async def scrape_wellfound_jobs(
@@ -27,14 +34,25 @@ async def scrape_wellfound_jobs(
     country: Optional[str] = None,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
+    limit_per_platform: int = 10,
+    date_preset: Optional[str] = None,
 ) -> list:
-    """Scrape Wellfound for startup jobs with founder info."""
-    all_jobs = []
+    """Search Wellfound for startup jobs via DDG."""
+    timelimit = _preset_to_timelimit(date_preset)
+    per_query = max(8, limit_per_platform // 2 + 4)
 
-    for role in roles[:3]:
-        jobs = await _search_wellfound(role, country)
-        all_jobs.extend(jobs)
-        await asyncio.sleep(1.5)
+    tasks = [
+        asyncio.get_event_loop().run_in_executor(
+            None, _search_wellfound_sync, role, country, timelimit, per_query
+        )
+        for role in roles[:3]
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    all_jobs = []
+    for r in results:
+        if isinstance(r, list):
+            all_jobs.extend(r)
 
     seen = set()
     unique = []
@@ -44,141 +62,143 @@ async def scrape_wellfound_jobs(
             seen.add(uid)
             unique.append(job)
 
-    return unique
+    return unique[:limit_per_platform * 2]
 
 
-async def _search_wellfound(role: str, country: Optional[str]) -> list:
-    jobs = []
-    slug = role.lower().replace(" ", "-")
-    urls = [
-        f"https://wellfound.com/role/r/{slug}",
-        f"https://wellfound.com/jobs?q={role.replace(' ', '+')}",
-    ]
-
-    async with httpx.AsyncClient(timeout=15, headers=HEADERS, follow_redirects=True) as client:
-        for url in urls[:1]:
-            try:
-                r = await client.get(url)
-                if r.status_code != 200:
-                    continue
-
-                soup = BeautifulSoup(r.text, "html.parser")
-
-                # Wellfound job cards
-                cards = soup.find_all("div", attrs={"data-test": re.compile(r"job")})
-                if not cards:
-                    cards = soup.find_all("div", class_=re.compile(r"job|listing|startup"))
-
-                for card in cards[:15]:
-                    title = _extract_text(card, ["h2", "h3", ".title", "[class*='title']"])
-                    company = _extract_text(card, ["[class*='company']", "[class*='startup']", "h4"])
-                    location = _extract_text(card, ["[class*='location']", "[class*='geo']"])
-                    link = card.find("a")
-                    href = link["href"] if link and link.get("href") else url
-
-                    if not href.startswith("http"):
-                        href = f"https://wellfound.com{href}"
-
-                    if not title and not company:
-                        continue
-
-                    jobs.append({
-                        "title": title or role.title(),
-                        "company": company or "Startup",
-                        "poster_name": None,
-                        "poster_title": "Founder / Hiring Manager",
-                        "poster_profile_url": None,
-                        "poster_linkedin": None,
-                        "post_url": href,
-                        "platform": "wellfound",
-                        "post_content": f"{title or role} at {company or 'startup'}. {location or ''}",
-                        "posted_at": None,
-                        "location": location,
-                        "job_type": "full-time",
-                        "is_remote": "remote" in (location or "").lower(),
-                        "tags": [role],
-                        "matched_role": role,
-                        "salary_range": None,
-                    })
-            except Exception as e:
-                print(f"Wellfound scrape error for {role}: {e}")
-
-    # Fallback: Google search for Wellfound listings
-    if not jobs:
-        jobs = await _google_wellfound(role, country)
-
-    return jobs
-
-
-async def _google_wellfound(role: str, country: Optional[str]) -> list:
-    """Google site:wellfound.com search as fallback."""
-    from urllib.parse import quote_plus
+def _search_wellfound_sync(
+    role: str,
+    country: Optional[str],
+    timelimit: Optional[str],
+    per_query: int = 8,
+) -> list:
     jobs = []
     country_q = f' "{country}"' if country else ""
-    query = f'site:wellfound.com/jobs "{role}"{country_q}'
 
-    try:
-        async with httpx.AsyncClient(timeout=12, headers=HEADERS, follow_redirects=True) as client:
-            r = await client.get(
-                f"https://www.google.com/search?q={quote_plus(query)}&num=15"
-            )
-            if r.status_code != 200:
-                return jobs
+    queries = [
+        f'site:wellfound.com "{role}"{country_q}',
+        f'site:wellfound.com "{role}" hiring{country_q}',
+        f'wellfound.com/jobs "{role}"{country_q}',
+    ]
 
-            soup = BeautifulSoup(r.text, "html.parser")
-            for result in soup.find_all("div", class_=re.compile(r"^g$|tF2Cxc"))[:10]:
-                link = result.find("a")
-                title_tag = result.find("h3")
-                snippet_tag = result.find("div", class_=re.compile(r"VwiC3b|IsZvec"))
+    seen_urls: set = set()
+    for query in queries:
+        results = _ddgs_search(query, max_results=per_query, timelimit=timelimit)
+        for r in results:
+            url = r.get("href", "")
+            if not url or "wellfound.com" not in url:
+                continue
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
 
-                href = link["href"] if link else ""
-                if "wellfound.com" not in href:
-                    continue
-                if href.startswith("/url?q="):
-                    href = href[7:].split("&")[0]
+            title = r.get("title", "")
+            body = r.get("body", "")
+            combined = f"{title} {body}"
 
-                title = title_tag.get_text(strip=True) if title_tag else role
-                snippet = snippet_tag.get_text(separator=" ", strip=True) if snippet_tag else ""
+            company = _extract_company_from_wf_url(url) or _extract_company_from_text(combined)
 
-                jobs.append({
-                    "title": title,
-                    "company": _extract_company(snippet),
-                    "poster_name": None,
-                    "poster_title": "Founder / Hiring Manager",
-                    "poster_profile_url": None,
-                    "poster_linkedin": None,
-                    "post_url": href,
-                    "platform": "wellfound",
-                    "post_content": snippet,
-                    "posted_at": None,
-                    "location": None,
-                    "job_type": "full-time",
-                    "is_remote": "remote" in snippet.lower(),
-                    "tags": [role],
-                    "matched_role": role,
-                    "salary_range": None,
-                })
-    except Exception as e:
-        print(f"Google Wellfound fallback error: {e}")
+            jobs.append({
+                "title": _extract_role(title, role),
+                "company": company,
+                "poster_name": None,
+                "poster_title": "Hiring Manager",
+                "poster_profile_url": None,
+                "poster_linkedin": None,
+                "post_url": url,
+                "platform": "wellfound",
+                "post_content": combined[:2000],
+                "posted_at": _parse_date_hint(body),
+                "location": _extract_location(combined),
+                "job_type": _extract_job_type(combined),
+                "is_remote": "remote" in combined.lower(),
+                "tags": [role] + _extract_skills(combined),
+                "matched_role": role,
+                "salary_range": _extract_salary(combined),
+            })
+        time.sleep(0.5)
 
     return jobs
 
 
-def _extract_text(element, selectors: list) -> Optional[str]:
-    for sel in selectors:
-        try:
-            found = element.select_one(sel)
-            if found:
-                return found.get_text(strip=True)
-        except Exception:
-            pass
+def _extract_company_from_wf_url(url: str) -> Optional[str]:
+    # wellfound.com/company/slug/jobs/... or wellfound.com/l/jobs/slug
+    m = re.search(r"wellfound\.com/(?:company|l/jobs)/([^/?#]+)", url)
+    if m:
+        slug = m.group(1)
+        return slug.replace("-", " ").title()
     return None
 
 
-def _extract_company(text: str) -> str:
-    m = re.search(r"at\s+([A-Z][A-Za-z0-9\s&.]+?)(?:\s*[-|,.]|\s+is|\s+we)", text)
+def _extract_company_from_text(text: str) -> Optional[str]:
+    # "Software Engineer at NominalCo •" or "at Company Name is hiring"
+    patterns = [
+        r"at\s+([A-Za-z][A-Za-z0-9\s&.]+?)\s+[•·]",
+        r"at\s+([A-Z][A-Za-z0-9\s&.]+?)(?:\s+is|\s+-|\.|,|!|\n|$)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            c = m.group(1).strip()
+            if 1 <= len(c.split()) <= 5 and c not in ("Wellfound", "AngelList"):
+                return c
+    return None
+
+
+def _extract_role(text: str, fallback: str) -> str:
+    # Strip " - Wellfound" or " | Wellfound" suffix from DDG titles
+    text = re.sub(r"\s*[\|\-]\s*Wellfound.*$", "", text, flags=re.IGNORECASE).strip()
+    if text and len(text) > 3:
+        return text[:120]
+    return fallback.title()
+
+
+def _extract_location(text: str) -> Optional[str]:
+    m = re.search(
+        r"\b(Remote|New York|San Francisco|London|Berlin|Austin|Seattle|Boston|Toronto|NYC|SF|LA|Chicago|Miami|Denver|Singapore|Bangalore)\b",
+        text, re.IGNORECASE
+    )
+    return m.group(1) if m else None
+
+
+def _extract_job_type(text: str) -> Optional[str]:
+    tl = text.lower()
+    if "contract" in tl or "freelance" in tl:
+        return "contract"
+    if "part-time" in tl or "part time" in tl:
+        return "part-time"
+    if "internship" in tl or "intern" in tl:
+        return "internship"
+    return "full-time"
+
+
+def _extract_salary(text: str) -> Optional[str]:
+    m = re.search(r"\$[\d,]+k?\s*(?:[-to]+)\s*\$[\d,]+k?|\$\d+[kKmM]", text, re.IGNORECASE)
+    return m.group(0) if m else None
+
+
+def _extract_skills(text: str) -> list:
+    skills = ["Python", "React", "TypeScript", "JavaScript", "Go", "Rust", "Java",
+              "Kubernetes", "AWS", "GCP", "SQL", "Machine Learning", "AI", "LLM",
+              "Node.js", "FastAPI", "Django", "Swift", "Kotlin", "C++"]
+    return [s for s in skills if re.search(r"\b" + re.escape(s) + r"\b", text, re.IGNORECASE)][:4]
+
+
+def _parse_date_hint(text: str) -> Optional[str]:
+    if not text:
+        return None
+    now = datetime.now(timezone.utc)
+    m = re.search(r"(\d+)\s*(hour|day|week|month)", text, re.IGNORECASE)
     if m:
-        c = m.group(1).strip()
-        if 1 <= len(c.split()) <= 5:
-            return c
-    return "Startup"
+        n, unit = int(m.group(1)), m.group(2).lower()
+        if "hour" in unit: return (now - timedelta(hours=n)).isoformat()
+        if "day" in unit: return (now - timedelta(days=n)).isoformat()
+        if "week" in unit: return (now - timedelta(weeks=n)).isoformat()
+        if "month" in unit: return (now - timedelta(days=n * 30)).isoformat()
+    m2 = re.search(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},\s+\d{4}", text)
+    if m2:
+        for fmt in ("%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(m2.group(0), fmt).replace(tzinfo=timezone.utc).isoformat()
+            except ValueError:
+                pass
+    return None

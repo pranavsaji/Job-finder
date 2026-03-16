@@ -12,6 +12,8 @@ async def scrape_hn_jobs(
     country: Optional[str] = None,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
+    limit_per_platform: int = 50,
+    date_preset: Optional[str] = None,
 ) -> list:
     """Scrape Hacker News for job postings using Algolia HN Search API."""
     all_jobs = []
@@ -194,32 +196,44 @@ def _role_matches(role: str, text: str) -> bool:
     return sum(1 for word in role_words if word in text) >= len(role_words) // 2 + 1
 
 
-def _extract_title_from_hn(text: str) -> str:
-    """Try to extract a job title from HN comment text."""
-    lines = text.split("\n")
-    for line in lines[:3]:
-        clean = line.strip()
-        if clean and len(clean) < 100 and "|" in clean:
-            return clean.split("|")[0].strip()
-    return lines[0][:100].strip() if lines else "HN Job Posting"
-
-
-def _extract_company_from_hn(text: str) -> str:
-    """Try to extract company name from HN comment."""
-    lines = text.split("\n")
-    for line in lines[:3]:
-        if "|" in line:
-            parts = line.split("|")
-            for part in parts:
-                clean = part.strip()
-                if 2 < len(clean.split()) <= 5 and not any(c in clean for c in ["@", "http"]):
-                    return clean
-    return "Unknown Company"
-
-
 def _clean_hn_html(text: str) -> str:
-    """Strip basic HTML from HN comment text."""
+    """Strip HTML tags and decode entities from HN comment text, preserving newlines."""
     import re
     text = re.sub(r"<[^>]+>", " ", text)
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&#x27;", "'")
-    return " ".join(text.split())
+    text = (text
+            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+            .replace("&#x27;", "'").replace("&#x2F;", "/").replace("&#x60;", "`")
+            .replace("&quot;", '"').replace("&nbsp;", " "))
+    # Collapse multiple spaces within each line but keep newlines
+    lines = [" ".join(line.split()) for line in text.split("\n")]
+    return "\n".join(lines)
+
+
+def _extract_title_from_hn(text: str) -> str:
+    """Extract job title from HN comment. Standard format: Company | Role | Location | ..."""
+    # Process line-by-line so we don't lose the pipe structure
+    for line in text.split("\n")[:4]:
+        clean = _clean_hn_html(line).strip()
+        if not clean or "|" not in clean:
+            continue
+        parts = [p.strip() for p in clean.split("|") if p.strip() and "http" not in p.lower()]
+        if len(parts) >= 2:
+            return parts[1][:120]  # Role is 2nd segment after company
+        if len(parts) == 1:
+            return parts[0][:120]
+    # Fallback: first cleaned line
+    first = _clean_hn_html(text.split("\n")[0]).strip() if text else ""
+    return first[:100] if first else "HN Job Posting"
+
+
+def _extract_company_from_hn(text: str) -> Optional[str]:
+    """Extract company name from HN comment (first pipe-separated segment)."""
+    for line in text.split("\n")[:4]:
+        clean = _clean_hn_html(line).strip()
+        if not clean or "|" not in clean:
+            continue
+        parts = [p.strip() for p in clean.split("|") if p.strip()]
+        first = parts[0] if parts else ""
+        if first and 0 < len(first.split()) <= 6 and "http" not in first.lower():
+            return first
+    return None
