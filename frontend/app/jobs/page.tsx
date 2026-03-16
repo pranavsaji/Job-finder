@@ -297,14 +297,15 @@ function JobsPageContent() {
     },
     listings: {
       title: "Find Job Listings",
-      description: "Pull curated listings from RemoteOK, YC jobs board, and Wellfound startup listings",
+      description: "Pull curated listings from job boards and startup platforms",
       platforms: [
-        { id: "remoteok", label: "RemoteOK", tip: "Remote jobs via public API" },
-        { id: "yc", label: "YC Jobs", tip: "Y Combinator backed startups" },
+        { id: "remoteok", label: "RemoteOK", tip: "Remote jobs via public API — exact dates" },
+        { id: "yc", label: "YC Jobs", tip: "Y Combinator backed startups (workatastartup.com)" },
         { id: "wellfound", label: "Wellfound", tip: "AngelList startup jobs" },
+        { id: "jobboards", label: "Job Boards", tip: "Greenhouse, Lever, Ashby, Workable, Rippling, Jobvite — real posting dates via ATS APIs" },
       ],
       buttonLabel: "Find Job Listings",
-      toastMsg: "Pulling job listings from RemoteOK, YC, and Wellfound...",
+      toastMsg: "Pulling job listings from RemoteOK, YC, Wellfound, Greenhouse, Lever and more...",
     },
     funded: {
       title: "Find Funded Companies",
