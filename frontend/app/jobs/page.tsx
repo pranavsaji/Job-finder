@@ -46,7 +46,7 @@ const DEFAULT_FILTERS: FilterState = {
   dateTo: "",
 };
 
-const POST_PLATFORMS = ["linkedin", "twitter", "reddit", "hn"];
+const POST_PLATFORMS = ["linkedin", "twitter", "reddit", "hn", "newsletter"];
 const LISTING_PLATFORMS = ["remoteok", "yc", "wellfound", "jobboards"];
 const FUNDED_PLATFORMS = ["funded"];
 
@@ -291,6 +291,7 @@ function JobsPageContent() {
         { id: "twitter", label: "Twitter/X", tip: "Founders + engineers posting openings" },
         { id: "reddit", label: "Reddit", tip: "r/forhire, r/hiring, r/cscareerquestions" },
         { id: "hn", label: "Hacker News", tip: "Who is Hiring threads" },
+        { id: "newsletter", label: "Newsletters", tip: "Substack, Ghost, dev.to, IndieHackers — dark market postings before job boards" },
       ],
       buttonLabel: "Find Hiring Posts",
       toastMsg: "Searching hiring posts across LinkedIn, Twitter, Reddit, HN...",

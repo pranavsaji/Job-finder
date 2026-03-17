@@ -2,18 +2,35 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Briefcase, MessageSquare, Settings, Zap, FileText } from "lucide-react";
+import {
+  LayoutDashboard, Briefcase, MessageSquare, Settings, Zap, FileText,
+  Radar, Bell, Network, BookOpen,
+} from "lucide-react";
 
-const navItems = [
+const coreNav = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/jobs", icon: Briefcase, label: "Jobs" },
   { href: "/resume", icon: FileText, label: "Resume" },
   { href: "/outreach", icon: MessageSquare, label: "Outreach" },
+];
+
+const intelligenceNav = [
+  { href: "/signals", icon: Radar, label: "Signals", tip: "Funding, GitHub & exec hires" },
+  { href: "/alerts", icon: Bell, label: "Alerts", tip: "24h job match notifications" },
+  { href: "/network", icon: Network, label: "Network", tip: "Hiring managers & alumni" },
+  { href: "/prep", icon: BookOpen, label: "Prep", tip: "Interview prep packs" },
+];
+
+const bottomNav = [
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
+
+  function isActive(href: string) {
+    return href === "/" ? pathname === "/" : pathname.startsWith(href);
+  }
 
   return (
     <aside
@@ -40,23 +57,51 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-3 space-y-0.5">
-        <p className="text-white/20 text-[10px] font-semibold uppercase tracking-widest px-3 mb-3 mt-1">
-          Navigation
+      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
+        {/* Core */}
+        <p className="text-white/20 text-[10px] font-semibold uppercase tracking-widest px-3 mb-2 mt-1">
+          Core
         </p>
-        {navItems.map(({ href, icon: Icon, label }) => {
-          const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href);
-          return (
+        {coreNav.map(({ href, icon: Icon, label }) => (
+          <Link
+            key={href}
+            href={href}
+            className={`sidebar-link ${isActive(href) ? "active" : ""}`}
+          >
+            <Icon size={16} />
+            {label}
+          </Link>
+        ))}
+
+        {/* Intelligence */}
+        <p className="text-white/20 text-[10px] font-semibold uppercase tracking-widest px-3 mb-2 mt-4">
+          Intelligence
+        </p>
+        {intelligenceNav.map(({ href, icon: Icon, label, tip }) => (
+          <Link
+            key={href}
+            href={href}
+            title={tip}
+            className={`sidebar-link ${isActive(href) ? "active" : ""}`}
+          >
+            <Icon size={16} />
+            {label}
+          </Link>
+        ))}
+
+        {/* Settings */}
+        <div className="pt-3">
+          {bottomNav.map(({ href, icon: Icon, label }) => (
             <Link
               key={href}
               href={href}
-              className={`sidebar-link ${isActive ? "active" : ""}`}
+              className={`sidebar-link ${isActive(href) ? "active" : ""}`}
             >
               <Icon size={16} />
               {label}
             </Link>
-          );
-        })}
+          ))}
+        </div>
       </nav>
 
       {/* Bottom info */}

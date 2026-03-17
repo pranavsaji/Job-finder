@@ -9,6 +9,7 @@ load_dotenv()
 
 from backend.models.database import create_tables
 from backend.routers import auth, jobs, resume, person, drafts, email_finder, admin as admin_router
+from backend.routers import signals, alerts, network, prep
 
 CORS_ORIGINS = [
     "http://localhost:3000",
@@ -61,6 +62,10 @@ app.include_router(person.router)
 app.include_router(drafts.router)
 app.include_router(email_finder.router)
 app.include_router(admin_router.router)
+app.include_router(signals.router)
+app.include_router(alerts.router)
+app.include_router(network.router)
+app.include_router(prep.router)
 
 
 def _migrate_db():

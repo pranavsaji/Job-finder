@@ -11,6 +11,7 @@ from backend.services.remoteok_scraper import scrape_remoteok_jobs
 from backend.services.yc_scraper import scrape_yc_jobs
 from backend.services.funded_scraper import scrape_funded_companies
 from backend.services.jobboards_scraper import scrape_jobboard_jobs
+from backend.services.newsletter_scraper import scrape_newsletter_jobs
 from backend.services.claude_service import analyze_job_post
 
 
@@ -24,6 +25,7 @@ PLATFORM_MAP = {
     "yc": scrape_yc_jobs,
     "funded": scrape_funded_companies,
     "jobboards": scrape_jobboard_jobs,
+    "newsletter": scrape_newsletter_jobs,
 }
 
 
