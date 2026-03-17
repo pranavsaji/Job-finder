@@ -73,7 +73,7 @@ async def scrape_newsletter_jobs(
     all_posts = []
 
     tasks = []
-    for role in roles[:4]:
+    for role in roles[:2]:
         tasks.append(asyncio.get_event_loop().run_in_executor(
             None, _search_newsletters_sync, role, country, per_query
         ))
@@ -182,7 +182,7 @@ def _search_newsletters_sync(role: str, country: Optional[str], per_query: int) 
                 "salary_range": _extract_salary(combined),
                 "_source": source,
             })
-        time.sleep(0.4)
+        time.sleep(0.2)
 
     return posts
 

@@ -101,7 +101,7 @@ export const jobsApi = {
     enrich_with_claude?: boolean;
     limit_per_platform?: number;
     date_preset?: string;
-  }) => getApi().post("/jobs/scrape/sync", data),
+  }) => getApi().post("/jobs/scrape/sync", data, { timeout: 120000 }),
 
   get: (id: number) => getApi().get(`/jobs/${id}`),
 

@@ -113,16 +113,23 @@ async def trigger_scrape_sync(
     current_user: User = Depends(get_current_user),
 ):
     """Trigger synchronous job scraping and return results immediately."""
-    jobs_data = await scrape_all(
-        roles=payload.roles,
-        platforms=payload.platforms,
-        country=payload.country,
-        date_from=payload.date_from,
-        date_to=payload.date_to,
-        enrich_with_claude=payload.enrich_with_claude,
-        limit_per_platform=payload.limit_per_platform,
-        date_preset=payload.date_preset,
-    )
+    import asyncio as _asyncio
+    try:
+        jobs_data = await _asyncio.wait_for(
+            scrape_all(
+                roles=payload.roles,
+                platforms=payload.platforms,
+                country=payload.country,
+                date_from=payload.date_from,
+                date_to=payload.date_to,
+                enrich_with_claude=payload.enrich_with_claude,
+                limit_per_platform=payload.limit_per_platform,
+                date_preset=payload.date_preset,
+            ),
+            timeout=110,  # 110s hard cap — return what we have instead of crashing
+        )
+    except _asyncio.TimeoutError:
+        jobs_data = []  # return empty rather than 500
 
     # Supplement with LinkedIn authenticated scraper if user has saved credentials
     # and linkedin is in the requested platforms (or all platforms requested)

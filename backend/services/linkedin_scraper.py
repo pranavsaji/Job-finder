@@ -43,17 +43,18 @@ async def scrape_linkedin_jobs(
 ) -> list:
     # Don't pass timelimit to DDG for LinkedIn — DDG barely indexes recent LinkedIn posts
     # so timelimit dramatically cuts results. We post-filter by date instead.
-    per_query = max(15, limit_per_platform + 5)
+    # Keep per_query and roles capped to avoid >60s wall time (DDG takes 2-5s per call).
+    per_query = min(12, max(8, limit_per_platform))
     all_posts = []
 
     tasks = []
-    for role in roles[:6]:
+    for role in roles[:3]:
         tasks.append(asyncio.get_event_loop().run_in_executor(
             None, _search_hiring_posts_sync, role, country, None, per_query
         ))
     # Also run Google News RSS search in parallel
     tasks.append(asyncio.get_event_loop().run_in_executor(
-        None, _search_google_news_rss, roles[:4], country, date_from
+        None, _search_google_news_rss, roles[:3], country, date_from
     ))
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -108,19 +109,12 @@ def _search_hiring_posts_sync(
         f'site:linkedin.com/posts "hiring" "{role}"{country_q}',
         f'site:linkedin.com/posts "we are hiring" "{role}"{country_q}',
         f'site:linkedin.com/posts "my team is hiring" "{role}"{country_q}',
-        f'site:linkedin.com/posts "looking for" "{role}"{country_q}',
         # Broad hiring queries without site: (server IPs less likely to be blocked)
         f'"{role}" "we are hiring" linkedin{country_q}{year_q}',
         f'"{role}" "my team is hiring" linkedin{country_q}{year_q}',
         f'"{role}" "we\'re hiring" "join us" linkedin{country_q}',
         f'"{role}" hiring "open role" linkedin "dm me" OR "reach out"{country_q}',
         f'linkedin.com "{role}" "we are hiring"{country_q}{year_q}',
-        f'"{role}" "now hiring" linkedin{country_q}',
-        f'"{role}" "actively hiring" linkedin{country_q}{year_q}',
-        f'"{role}" "excited to share" "hiring" linkedin{country_q}',
-        f'"{role}" "thrilled to announce" hiring linkedin{country_q}',
-        f'"{role}" "we just opened" OR "we\'ve opened" linkedin{country_q}',
-        f'site:linkedin.com "{role}" "apply now" OR "apply here" hiring{country_q}',
     ]
 
     seen_urls: set = set()
@@ -159,7 +153,7 @@ def _search_hiring_posts_sync(
                 "matched_role": role,
                 "salary_range": _extract_salary(combined),
             })
-        time.sleep(0.5)
+        time.sleep(0.2)
 
     return posts
 
@@ -229,7 +223,7 @@ def _search_google_news_rss(roles: list, country: Optional[str], date_from: Opti
                 })
         except Exception as e:
             print(f"Google News RSS error: {e}")
-        time.sleep(0.5)
+        time.sleep(0.2)
 
     return posts
 

@@ -39,16 +39,21 @@ async def scrape_twitter_jobs(
     date_preset: Optional[str] = None,
 ) -> list:
     """Search Twitter/X for hiring posts via DuckDuckGo site: search."""
-    # Skip DDG timelimit — sparse indexing means timelimit kills results
-    per_query = max(15, limit_per_platform + 5)
+    # Skip DDG timelimit — sparse indexing means timelimit kills results.
+    # Parallelize roles to avoid sequential 1s sleeps killing response time.
+    per_query = min(12, max(8, limit_per_platform))
     all_jobs = []
 
-    for role in roles[:5]:
-        jobs = await asyncio.get_event_loop().run_in_executor(
+    tasks = [
+        asyncio.get_event_loop().run_in_executor(
             None, _search_twitter_posts_sync, role, country, None, per_query
         )
-        all_jobs.extend(jobs)
-        await asyncio.sleep(1.0)
+        for role in roles[:3]
+    ]
+    results_list = await asyncio.gather(*tasks, return_exceptions=True)
+    for r in results_list:
+        if isinstance(r, list):
+            all_jobs.extend(r)
 
     seen = set()
     unique = []
@@ -95,14 +100,10 @@ def _search_twitter_posts_sync(
         f'site:twitter.com "my team is hiring" "{role}"{country_q}',
         f'site:twitter.com "hiring" "{role}" ("dm me" OR "apply" OR "join us"){country_q}',
         f'site:x.com "we are hiring" "{role}"{country_q}',
-        f'site:x.com "my team is hiring" "{role}"{country_q}',
         f'site:x.com "hiring" "{role}" ("apply" OR "join us"){country_q}',
         f'twitter.com "hiring" "{role}" 2025 OR 2026{country_q}',
         f'x.com "we\'re hiring" "{role}"{country_q}',
-        f'twitter.com "excited to announce" "hiring" "{role}"{country_q}',
-        f'x.com "looking for" "{role}" "apply"{country_q}',
         f'twitter.com "open role" "{role}" hiring{country_q}',
-        f'x.com "now hiring" "{role}"{country_q}',
     ]
 
     seen_urls: set = set()
@@ -153,7 +154,7 @@ def _search_twitter_posts_sync(
                 "salary_range": _extract_salary(combined),
             })
 
-        time.sleep(0.8)
+        time.sleep(0.2)
 
     return jobs
 
