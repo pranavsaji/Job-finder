@@ -3,6 +3,8 @@ Interview prep pack generator.
 Mines public interview data via DDG then synthesizes with Claude.
 """
 import asyncio
+import json
+import re
 from typing import Optional
 
 
@@ -58,9 +60,11 @@ async def generate_prep_pack(company: str, role: str, job_description: str = "")
 
     # Use Claude to synthesize
     try:
-        from backend.services.claude_service import get_anthropic_client
-        client = get_anthropic_client()
-        if client:
+        import anthropic as _anthropic
+        import os as _os
+        _api_key = _os.getenv("ANTHROPIC_API_KEY")
+        if _api_key:
+            client = _anthropic.Anthropic(api_key=_api_key)
             return await _claude_synthesize(
                 client, company, role, job_description,
                 interview_snippets, culture_snippets, salary_snippets, process_snippets
@@ -85,7 +89,7 @@ async def _claude_synthesize(
 
     prompt = f"""You are a career coach preparing someone for a {role} interview at {company}.{jd_section}
 
-Use the research below to create a concise, actionable prep pack. Be specific to {company}.
+Use the research below. Be specific to {company}. Keep each field CONCISE (1 sentence max per item in lists).
 
 INTERVIEW DATA:
 {interview_snippets or "No specific interview data found."}
@@ -99,25 +103,15 @@ CULTURE DATA:
 SALARY DATA:
 {salary_snippets or "No salary data found."}
 
-Return a JSON object with exactly these keys:
-{{
-  "process": "2-3 sentences describing the typical interview process and number of rounds",
-  "rounds": ["Round 1: ...", "Round 2: ...", ...],
-  "technical_focus": ["Topic 1", "Topic 2", ...] (5-8 items specific to this company/role),
-  "likely_questions": ["Question 1?", "Question 2?", ...] (6-10 real or highly likely questions),
-  "culture_notes": "2-3 sentences about company culture and what they look for",
-  "salary_range": "Salary range string or null",
-  "questions_to_ask": ["Question to ask interviewer 1", ...] (4-5 smart questions),
-  "prep_tips": ["Tip 1", "Tip 2", ...] (4-6 company-specific tips),
-  "red_flags": "Any concerns from reviews, or null"
-}}"""
+Respond with ONLY a JSON object (no markdown, no explanation), with exactly these keys:
+{{"process":"2 sentence summary","rounds":["Round 1: name + brief desc","Round 2: ..."],"technical_focus":["Topic 1","Topic 2","Topic 3","Topic 4","Topic 5"],"likely_questions":["Q1?","Q2?","Q3?","Q4?","Q5?","Q6?"],"culture_notes":"2 sentence summary","salary_range":"range or null","questions_to_ask":["Q1","Q2","Q3","Q4"],"prep_tips":["Tip 1","Tip 2","Tip 3","Tip 4"],"red_flags":"concern or null"}}"""
 
     import json
     response = await asyncio.get_event_loop().run_in_executor(
         None,
         lambda: client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1500,
+            max_tokens=2000,
             messages=[{"role": "user", "content": prompt}],
         )
     )

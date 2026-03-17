@@ -452,16 +452,21 @@ Your resume writing principles:
 10. Contact line: Name | Email | Phone | LinkedIn | Location
 {NO_DASH_INSTRUCTION}"""
 
-    user_prompt = f"""Rewrite this resume completely, optimized for this specific job.
-Preserve all real experience and facts from the original resume. Do NOT invent new jobs or degrees.
-Rewrite, reorder, and strengthen what exists.
+    user_prompt = f"""You are rewriting this candidate's resume SPECIFICALLY for the job below.
+
+CRITICAL RULES:
+- Use the original resume ONLY as a source of facts (employers, dates, degrees, projects).
+- REWRITE every single bullet from scratch — do NOT copy any sentence from the original.
+- Every bullet must be tailored to match what THIS specific job description asks for.
+- Front-load keywords from the JD naturally into bullets and summary.
+- Do NOT output anything that could appear word-for-word in the original resume.
 
 TARGET JOB TITLE: {job_info.get('title', 'Not specified')}
 TARGET COMPANY: {job_info.get('company', 'Not specified')}
 JOB DESCRIPTION:
 {job_info.get('post_content', '')[:3000]}
 
-ORIGINAL RESUME:
+ORIGINAL RESUME (use as fact-source only — rewrite all text):
 {resume_text[:4000] if resume_text else 'No resume'}
 
 Return a JSON object with this EXACT structure:

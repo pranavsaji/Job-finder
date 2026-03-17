@@ -62,26 +62,51 @@ async def fetch_company_signals(company: str, roles: Optional[list] = None) -> l
 
 
 async def scan_signals_for_roles(roles: list, companies: Optional[list] = None) -> list:
-    """Broad scan: find companies showing hiring signals for given roles."""
+    """
+    Broad scan: find companies showing hiring signals for given roles.
+    Strategy: run multiple targeted DDG searches and extract company names
+    from job post titles / news headlines.
+    """
     loop = asyncio.get_event_loop()
     all_signals = []
 
+    signal_queries = []
     for role in roles[:3]:
-        results = await loop.run_in_executor(None, _ddgs_search,
-            f'"{role}" hiring "series" OR "raised" OR "expands" team 2025 OR 2026', 8)
+        signal_queries += [
+            # Greenhouse ATS — URL contains company slug
+            (f'site:boards.greenhouse.io "{role}"', "job_opening", role),
+            # Lever ATS — URL contains company slug
+            (f'site:jobs.lever.co "{role}"', "job_opening", role),
+            # Wellfound company jobs — URL has /company/SLUG
+            (f'site:wellfound.com/company "{role}"', "job_opening", role),
+            # Ashby ATS
+            (f'site:jobs.ashbyhq.com "{role}"', "job_opening", role),
+            # LinkedIn jobs (title extraction)
+            (f'site:linkedin.com/jobs "{role}" hiring 2025 OR 2026', "job_opening", role),
+            # HN Who's Hiring — company names in posts
+            (f'site:news.ycombinator.com "who is hiring" "{role}" 2025 OR 2026', "hiring_signal", role),
+        ]
+
+    tasks = [
+        loop.run_in_executor(None, _ddgs_search, q, 6)
+        for q, _, _ in signal_queries
+    ]
+    results_all = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for (query, sig_type, role), results in zip(signal_queries, results_all):
+        if not isinstance(results, list):
+            continue
         for r in results:
-            company_guess = _extract_company_from_snippet(r.get("title", ""), r.get("body", ""))
-            if not company_guess:
-                continue
+            company = _extract_company_from_result(r.get("title", ""), r.get("href", ""), r.get("body", ""))
             all_signals.append({
-                "type": "hiring_signal",
-                "company": company_guess,
+                "type": sig_type,
+                "company": company or "Unknown",
                 "title": r.get("title", "")[:120],
                 "description": r.get("body", "")[:300],
                 "url": r.get("href", ""),
                 "date": _parse_date_hint(r.get("body", "")),
-                "badge": "Hiring Signal",
-                "badge_color": "green",
+                "badge": _type_to_badge(sig_type),
+                "badge_color": _type_to_color(sig_type),
                 "matched_role": role,
             })
 
@@ -95,16 +120,52 @@ async def scan_signals_for_roles(roles: list, companies: Optional[list] = None) 
     return unique
 
 
-def _extract_company_from_snippet(title: str, body: str) -> Optional[str]:
-    patterns = [
-        r"^([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)?)\s+(?:raises|secures|hires|launches|announces)",
-        r"([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+)?)\s+is\s+hiring",
+def _type_to_badge(t: str) -> str:
+    return {"funding": "Funding Signal", "news": "News", "job_opening": "Open Role",
+            "github": "GitHub", "hiring_signal": "Hiring Signal"}.get(t, "Signal")
+
+
+def _type_to_color(t: str) -> str:
+    return {"funding": "green", "news": "blue", "job_opening": "red",
+            "github": "blue", "hiring_signal": "green"}.get(t, "purple")
+
+
+def _extract_company_from_result(title: str, url: str, body: str) -> Optional[str]:
+    """Extract company name from search result title, URL, or body."""
+    # Try URL-based extraction (wellfound, linkedin company pages)
+    import re as _re
+    url_patterns = [
+        r"boards\.greenhouse\.io/([a-z0-9\-_]+)/jobs",
+        r"boards\.greenhouse\.io/([a-z0-9\-_]+)$",
+        r"boards\.greenhouse\.io/([a-z0-9\-_]+)[/?]",
+        r"jobs\.lever\.co/([a-z0-9\-_]+)/",
+        r"jobs\.lever\.co/([a-z0-9\-_]+)$",
+        r"jobs\.ashbyhq\.com/([a-z0-9\-_]+)/",
+        r"jobs\.ashbyhq\.com/([a-z0-9\-_]+)$",
+        r"wellfound\.com/company/([a-z0-9\-]+)",
+        r"linkedin\.com/company/([a-z0-9\-]+)",
+        r"greenhouse\.io/([a-z0-9\-]+)/jobs",
+        r"lever\.co/([a-z0-9\-]+)/",
     ]
-    for pat in patterns:
-        m = re.search(pat, title)
+    for pat in url_patterns:
+        m = _re.search(pat, url)
+        if m:
+            slug = m.group(1).replace("-", " ").title()
+            if slug and slug.lower() not in ("embed", "jobs", "apply"):
+                return slug
+
+    # Try title patterns
+    title_patterns = [
+        r"^([A-Z][A-Za-z0-9&\.\-]+(?:\s+[A-Z][A-Za-z0-9&\.]+)?)\s+(?:is\s+)?[Hh]iring",
+        r"^([A-Z][A-Za-z0-9&\.\-]+(?:\s+[A-Z][A-Za-z0-9&\.]+)?)\s+(?:raises|secures|launches)",
+        r"Jobs?\s+at\s+([A-Z][A-Za-z0-9&\.\-]+(?:\s+[A-Z][A-Za-z0-9&\.]+)?)",
+        r"([A-Z][A-Za-z0-9&\.\-]+(?:\s+[A-Z][A-Za-z0-9&\.]+)?)\s+Jobs?\s*[|\-]",
+    ]
+    for pat in title_patterns:
+        m = _re.search(pat, title)
         if m:
             c = m.group(1).strip()
-            if 1 <= len(c.split()) <= 4:
+            if 1 <= len(c.split()) <= 4 and c not in ("The", "A", "An", "Top", "Best"):
                 return c
     return None
 

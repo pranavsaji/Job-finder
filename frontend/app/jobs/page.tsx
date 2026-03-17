@@ -177,6 +177,8 @@ function JobsPageContent() {
   const [scrapeDateTo, setScrapeDateTo] = useState("");
   const [scrapeLimit, setScrapeLimit] = useState(10);
 
+  const [panelTab, setPanelTab] = useState<"info" | "resume">("info");
+
   // Derived: selected job object
   const selectedJob = allJobs.find((j) => j.id === selectedJobId) || null;
 
@@ -914,9 +916,11 @@ function JobsPageContent() {
                         )
                       }
                       onAskAI={() => {
+                        setPanelTab("info");
                         setSelectedJobId(job.id);
                       }}
                       onTailored={() => {
+                        setPanelTab("resume");
                         setSelectedJobId(job.id);
                       }}
                       onStatusChange={(status) => {
@@ -947,6 +951,7 @@ function JobsPageContent() {
               <DraftPanel
                 job={selectedJob}
                 onClose={() => setSelectedJobId(null)}
+                initialTab={panelTab}
               />
             </motion.div>
           )}

@@ -35,6 +35,7 @@ import toast from "react-hot-toast";
 interface DraftPanelProps {
   job: Job;
   onClose: () => void;
+  initialTab?: TabId;
 }
 
 type TabId = "info" | "linkedin" | "email" | "resume" | "points";
@@ -122,6 +123,7 @@ function ResumeTab({ job }: { job: Job }) {
   const [tailorResult, setTailorResult] = useState<TailorResult | null>(null);
   const [tailoring, setTailoring] = useState(false);
   const [hasResume, setHasResume] = useState<boolean | null>(null);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
 
   useEffect(() => {
     resumeApi
@@ -149,6 +151,25 @@ function ResumeTab({ job }: { job: Job }) {
       toast.error(message);
     } finally {
       setTailoring(false);
+    }
+  }
+
+  async function generateResumePdf() {
+    setGeneratingPdf(true);
+    try {
+      const res = await resumeApi.generateAts({ job_id: job.id });
+      const blob = new Blob([res.data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `resume_tailored_${job.company || "company"}_${job.id}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Tailored resume downloaded!");
+    } catch {
+      toast.error("Failed to generate resume. Make sure you have a resume uploaded.");
+    } finally {
+      setGeneratingPdf(false);
     }
   }
 
@@ -200,23 +221,34 @@ function ResumeTab({ job }: { job: Job }) {
             match, and generate tailored bullet points, missing keywords, and
             actionable advice.
           </p>
-          <button
-            onClick={tailorResume}
-            disabled={tailoring || hasResume === null}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
-            style={{
-              background: tailoring
-                ? "rgba(139,92,246,0.1)"
-                : "rgba(139,92,246,0.22)",
-              color: "#c4b5fd",
-              border: "1px solid rgba(139,92,246,0.3)",
-            }}
-          >
-            <Sparkles size={11} />
-            {tailoring
-              ? "Analyzing your resume vs job requirements..."
-              : "Tailor Resume for This Job"}
-          </button>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={tailorResume}
+              disabled={tailoring || hasResume === null}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+              style={{
+                background: tailoring ? "rgba(139,92,246,0.1)" : "rgba(139,92,246,0.22)",
+                color: "#c4b5fd",
+                border: "1px solid rgba(139,92,246,0.3)",
+              }}
+            >
+              <Sparkles size={11} />
+              {tailoring ? "Analyzing..." : "Analyze Match"}
+            </button>
+            <button
+              onClick={generateResumePdf}
+              disabled={generatingPdf || hasResume === null}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+              style={{
+                background: generatingPdf ? "rgba(16,185,129,0.08)" : "rgba(16,185,129,0.15)",
+                color: "#34d399",
+                border: "1px solid rgba(16,185,129,0.25)",
+              }}
+            >
+              <FileText size={11} />
+              {generatingPdf ? "Generating..." : "Generate Tailored Resume"}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -365,14 +397,37 @@ function ResumeTab({ job }: { job: Job }) {
           <CopyableItem text={tailorResult.tailored_summary} />
         </div>
       )}
+
+      {/* Generate PDF */}
+      <div
+        className="rounded-xl p-3 mt-2"
+        style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.15)" }}
+      >
+        <p className="text-white/40 text-[11px] mb-2 leading-relaxed">
+          Generate a fully tailored resume PDF rewritten for this specific job.
+        </p>
+        <button
+          onClick={generateResumePdf}
+          disabled={generatingPdf}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+          style={{
+            background: generatingPdf ? "rgba(16,185,129,0.08)" : "rgba(16,185,129,0.18)",
+            color: "#34d399",
+            border: "1px solid rgba(16,185,129,0.3)",
+          }}
+        >
+          <FileText size={11} />
+          {generatingPdf ? "Generating PDF..." : "Generate Tailored Resume PDF"}
+        </button>
+      </div>
     </div>
   );
 }
 
-export default function DraftPanel({ job, onClose }: DraftPanelProps) {
+export default function DraftPanel({ job, onClose, initialTab }: DraftPanelProps) {
   const [person, setPerson] = useState<Person | null>(null);
   const [loadingPerson, setLoadingPerson] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabId>("info");
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab || "info");
   const [linkedinDraft, setLinkedinDraft] = useState<Draft | null>(null);
   const [emailDraft, setEmailDraft] = useState<Draft | null>(null);
   const [talkingPoints, setTalkingPoints] = useState<string[]>([]);
@@ -384,9 +439,8 @@ export default function DraftPanel({ job, onClose }: DraftPanelProps) {
   useEffect(() => {
     loadPerson();
     loadDrafts();
-    // Reset to info tab when job changes
-    setActiveTab("info");
-  }, [job.id]);
+    setActiveTab(initialTab || "info");
+  }, [job.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadPerson() {
     setLoadingPerson(true);
