@@ -299,3 +299,60 @@ export interface TailorResult {
   gaps: string[];
   strengths: string[];
 }
+
+// Prep API
+export const prepApi = {
+  generate: (data: { company: string; role: string; job_description?: string }) =>
+    getApi().post("/prep/generate", data, { timeout: 90000 }),
+
+  chatStream: async (
+    data: {
+      company: string;
+      role: string;
+      job_description?: string;
+      pack: object;
+      messages: Array<{ role: string; content: string }>;
+      message: string;
+    },
+    onChunk: (text: string) => void,
+    onDone: () => void,
+  ) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("jif_token") : "";
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const response = await fetch(`${apiUrl}/prep/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        if (part.startsWith("data: ")) {
+          const payload = part.slice(6);
+          if (payload === "[DONE]") {
+            onDone();
+            return;
+          }
+          if (!payload.startsWith("[ERROR]")) {
+            // Restore escaped newlines sent by the backend
+            onChunk(payload.replace(/\\n/g, "\n"));
+          }
+        }
+      }
+    }
+    onDone();
+  },
+};
