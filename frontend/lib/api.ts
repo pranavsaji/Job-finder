@@ -363,3 +363,64 @@ export const prepApi = {
 
   deleteSaved: (id: number) => getApi().delete(`/prep/saved/${id}`),
 };
+
+// Mock Interview API
+export const mockApi = {
+  start: (data: {
+    company: string;
+    role: string;
+    interview_type: string;
+    difficulty: string;
+    job_id?: number;
+    job_description?: string;
+  }) => getApi().post("/mock/start", data, { timeout: 60000 }),
+
+  chatStream: async (
+    data: { session_id: number; message: string; code?: string },
+    onChunk: (text: string) => void,
+    onDone: (complete: boolean) => void,
+  ) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("jif_token") : "";
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const response = await fetch(`${apiUrl}/mock/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        if (!part.startsWith("data: ")) continue;
+        const payload = part.slice(6);
+        if (payload.startsWith("[DONE:")) {
+          const complete = payload.includes("True") || payload.includes("true");
+          onDone(complete);
+          return;
+        }
+        if (!payload.startsWith("[ERROR]")) {
+          onChunk(payload.replace(/\\n/g, "\n"));
+        }
+      }
+    }
+    onDone(false);
+  },
+
+  evaluate: (data: { session_id: number; speech_metrics: object; cheat_flags: object }) =>
+    getApi().post("/mock/evaluate", data, { timeout: 90000 }),
+
+  abandon: (session_id: number) => getApi().post(`/mock/abandon/${session_id}`),
+
+  listSessions: () => getApi().get("/mock/sessions"),
+
+  getSession: (id: number) => getApi().get(`/mock/sessions/${id}`),
+
+  deleteSession: (id: number) => getApi().delete(`/mock/sessions/${id}`),
+};

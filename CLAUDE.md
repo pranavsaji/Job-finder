@@ -9,6 +9,7 @@ Full-stack job hunting platform: scrapes job postings/hiring posts across 9+ pla
 - **AI:** Anthropic Claude (`claude_service.py`, `prep_service.py`)
 - **Scraping:** DuckDuckGo (`ddgs`), Playwright (LinkedIn auth), httpx + BeautifulSoup
 - **Scheduler:** APScheduler `AsyncIOScheduler` — hourly alert cron, SMTP email via smtplib
+- **Mock Interview:** Monaco Editor (`@monaco-editor/react`, dynamic import), Web Speech API STT/TTS, `getUserMedia` webcam
 - **ATS APIs:** Greenhouse (`boards-api.greenhouse.io`), Lever (`api.lever.co`) for real posting dates
 - **Auth:** JWT (python-jose), bcrypt passwords, Fernet encryption for stored LinkedIn creds
 - **Deploy:** Railway (backend) + Vercel (frontend)
@@ -27,6 +28,10 @@ Full-stack job hunting platform: scrapes job postings/hiring posts across 9+ pla
 | `backend/routers/prep.py` | `/prep/generate`, `/prep/chat` (SSE), `/prep/save`, `/prep/saved`, `/prep/saved/{id}` |
 | `backend/routers/signals.py` | `POST /signals/company`, `POST /signals/scan` |
 | `backend/services/alert_scheduler.py` | Hourly APScheduler job: scrape all user alerts, save new jobs, send email |
+| `backend/models/mock_session.py` | `MockSession` model — stores interview sessions, messages, evaluation, cheat flags |
+| `backend/services/mock_interview_service.py` | Research agent, system prompt builder (9 types × 4 difficulties), evaluation engine |
+| `backend/routers/mock_interview.py` | `/mock/start`, `/mock/chat` (SSE), `/mock/evaluate`, `/mock/sessions` CRUD |
+| `frontend/app/mock/page.tsx` | Full mock interview UI: setup, voice/video session, Monaco code editor, eval report |
 | `backend/routers/alerts.py` | Alert CRUD + `POST /alerts/{id}/check` |
 | `backend/routers/network.py` | `POST /network/hiring-manager`, `POST /network/alumni` |
 | `backend/routers/jobs.py` | Job listing, scrape trigger (sync + background), status updates |
@@ -86,10 +91,15 @@ curl -s -X POST http://localhost:8001/prep/generate \
 - **Prep packs persistence:** `PrepPackRecord` table upserts on same user+company+role; `create_tables()` must import the model to register it with SQLAlchemy metadata
 - **Interview agent:** SSE streaming via `StreamingResponse`; newlines escaped as `\\n` in backend, unescaped in frontend; optional DDG search injected for fresh-info keywords
 - **Alert scheduler:** `AsyncIOScheduler` started at app startup (first run 30 s after boot, then every 1 h); each alert scrapes its roles, saves new jobs per user, emails if new jobs found; email skipped gracefully when SMTP vars absent
+- **Mock interview session lifecycle:** setup → research (DDG + Claude) → active (SSE chat) → evaluate (Claude rubric) → report; `[INTERVIEW_COMPLETE]` token in stream auto-triggers evaluation
+- **Mock interview types:** behavioral, technical_screen, system_design, coding, manager, deep_dive, salary, stress, culture_fit — each has its own persona, question count, and focus
+- **Anti-cheat:** `visibilitychange` + `paste` event listeners in coding round; tab-switch and paste counts sent with evaluate request; Claude penalises scores if flagged
+- **Speech metrics:** filler word count, Web Speech API confidence scores, WPM — all fed into confidence score during evaluation
+- **Evaluation:** Claude scores 5 dimensions (0-100, no grade inflation); verdict = pass ≥70 / conditional_pass 55-69 / fail <55; impossible difficulty expects most candidates to fail
 
 ## Deploy
 - **Backend:** Railway auto-deploys on push to `main`
 - **Frontend:** Vercel auto-deploys; set `NEXT_PUBLIC_API_URL` to Railway backend URL
 
 ## Last Updated
-2026-03-20
+2026-03-18

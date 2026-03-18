@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Briefcase, MessageSquare, Settings, Zap, FileText,
-  Radar, Bell, Network, BookOpen,
+  Radar, Bell, Network, BookOpen, Swords,
 } from "lucide-react";
 
 const coreNav = [
@@ -19,6 +19,7 @@ const intelligenceNav = [
   { href: "/alerts", icon: Bell, label: "Alerts", tip: "24h job match notifications" },
   { href: "/network", icon: Network, label: "Network", tip: "Hiring managers & alumni" },
   { href: "/prep", icon: BookOpen, label: "Prep", tip: "Interview prep packs" },
+  { href: "/mock", icon: Swords, label: "Mock Interview", tip: "Live AI interview simulation" },
 ];
 
 const bottomNav = [
