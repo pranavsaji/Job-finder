@@ -57,6 +57,14 @@ def start_scheduler():
             replace_existing=True,
             next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=30),
         )
+        sched.add_job(
+            _check_followups,
+            trigger="cron",
+            hour=8,
+            minute=0,
+            id="daily_followups",
+            replace_existing=True,
+        )
         sched.start()
         log.info("Alert scheduler started (runs every 1 h, first run in 30 s)")
 
@@ -138,6 +146,10 @@ async def _process_alert(user: User, alert: dict):
             roles=roles,
             new_jobs=new_jobs,
         )
+        # Send webhook if configured for this alert
+        webhook_url = alert.get("webhook_url")
+        if webhook_url:
+            asyncio.create_task(_send_webhook(alert, new_jobs))
     else:
         log.info("Alert %s: no new jobs", alert_id)
 
@@ -215,6 +227,125 @@ def _update_last_checked(user: User, alert_id: str, count: int):
         log.error("Failed to update last_checked: %s", e)
     finally:
         db.close()
+
+
+# ── Follow-up reminder checker (runs daily at 08:00) ──────────────────────
+
+async def _check_followups():
+    """Find jobs and pipeline entries with follow_up_at within the next 24h and send reminders."""
+    now = datetime.datetime.utcnow()
+    window_end = now + datetime.timedelta(hours=24)
+
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        for user in users:
+            # Jobs due today
+            due_jobs = (
+                db.query(Job)
+                .filter(
+                    Job.user_id == user.id,
+                    Job.follow_up_at != None,
+                    Job.follow_up_at >= now,
+                    Job.follow_up_at <= window_end,
+                    Job.status != "archived",
+                )
+                .all()
+            )
+
+            # Pipeline entries due today
+            due_pipeline = []
+            try:
+                from backend.models.pipeline import PipelineEntry
+                due_pipeline = (
+                    db.query(PipelineEntry)
+                    .filter(
+                        PipelineEntry.user_id == user.id,
+                        PipelineEntry.follow_up_at != None,
+                        PipelineEntry.follow_up_at >= now,
+                        PipelineEntry.follow_up_at <= window_end,
+                    )
+                    .all()
+                )
+            except Exception:
+                pass
+
+            total = len(due_jobs) + len(due_pipeline)
+            if total == 0:
+                continue
+
+            log.info(
+                "Follow-up reminders for user %s: %d jobs, %d pipeline entries",
+                user.id, len(due_jobs), len(due_pipeline),
+            )
+
+            if _smtp_configured():
+                lines = []
+                for j in due_jobs:
+                    lines.append(f"  - Job: {j.title or 'Untitled'} at {j.company or 'Unknown'}")
+                for p in due_pipeline:
+                    lines.append(f"  - Pipeline: {p.role} at {p.company} (stage: {p.stage})")
+
+                subject = f"[Job Finder] Follow-up reminder: {total} item{'s' if total != 1 else ''} due today"
+                body = (
+                    f"Hi {user.name},\n\n"
+                    f"You have {total} follow-up{'s' if total != 1 else ''} due today:\n\n"
+                    + "\n".join(lines)
+                    + "\n\nLog in to manage your follow-ups.\n\nJob Info Finder"
+                )
+
+                msg = MIMEMultipart("alternative")
+                msg["Subject"] = subject
+                msg["From"] = f"Job Info Finder <{os.getenv('EMAIL_FROM', os.getenv('SMTP_USER'))}>"
+                msg["To"] = f"{user.name} <{user.email}>"
+                msg.attach(MIMEText(body, "plain"))
+
+                host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+                port = int(os.getenv("SMTP_PORT", "587"))
+                smtp_user = os.getenv("SMTP_USER", "")
+                smtp_pass = os.getenv("SMTP_PASS", "")
+
+                try:
+                    import ssl as _ssl
+                    context = _ssl.create_default_context()
+                    with smtplib.SMTP(host, port, timeout=15) as server:
+                        server.ehlo()
+                        server.starttls(context=context)
+                        server.login(smtp_user, smtp_pass)
+                        server.sendmail(smtp_user, [user.email], msg.as_string())
+                    log.info("Follow-up reminder sent to %s", user.email)
+                except Exception as e:
+                    log.error("Failed to send follow-up email to %s: %s", user.email, e)
+    finally:
+        db.close()
+
+
+async def _send_webhook(alert: dict, new_jobs: list):
+    """POST job matches to webhook URL if configured on the alert."""
+    webhook_url = alert.get("webhook_url")
+    if not webhook_url:
+        return
+    import httpx
+    payload = {
+        "alert_id": alert.get("id"),
+        "alert_label": alert.get("label", ""),
+        "new_jobs_count": len(new_jobs),
+        "jobs": [
+            {
+                "title": j.get("title"),
+                "company": j.get("company"),
+                "url": j.get("post_url"),
+                "posted_at": j.get("posted_at"),
+            }
+            for j in new_jobs[:10]
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(webhook_url, json=payload)
+        log.info("Webhook sent to %s", webhook_url)
+    except Exception as e:
+        log.error("Webhook delivery failed to %s: %s", webhook_url, e)
 
 
 # ── Email ──────────────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ from backend.services.claude_service import (
     draft_linkedin_message,
     draft_email,
     suggest_talking_points,
+    generate_cover_letter as _generate_cover_letter,
 )
 
 router = APIRouter(prefix="/drafts", tags=["drafts"])
@@ -197,6 +198,31 @@ async def generate_talking_points(
     db.commit()
     db.refresh(draft)
     return draft.to_dict()
+
+
+class CoverLetterRequest(BaseModel):
+    job_id: Optional[int] = None
+    company: str
+    role: str
+    job_description: Optional[str] = None
+    tone: str = "professional"  # professional | conversational | bold
+
+
+@router.post("/cover-letter")
+def generate_cover_letter_endpoint(
+    payload: CoverLetterRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Generate a tailored cover letter using Claude."""
+    result = _generate_cover_letter(
+        resume_text=current_user.resume_text or "",
+        company=payload.company,
+        role=payload.role,
+        job_description=payload.job_description or "",
+        tone=payload.tone,
+    )
+    return {"cover_letter": result}
 
 
 @router.get("/{job_id}")

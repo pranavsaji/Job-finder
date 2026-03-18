@@ -541,6 +541,50 @@ CRITICAL RULES:
     return {}
 
 
+def generate_cover_letter(
+    resume_text: str,
+    company: str,
+    role: str,
+    job_description: str,
+    tone: str = "professional",
+) -> str:
+    """Generate a tailored cover letter. Synchronous (no async needed for single call)."""
+    tone_instructions = {
+        "professional": "formal, polished, traditional business letter style",
+        "conversational": "warm, authentic, slightly informal but respectful",
+        "bold": "confident, direct, memorable - lead with impact not formality",
+    }.get(tone, "formal, polished, traditional business letter style")
+
+    client = _get_client()
+    prompt = f"""Write a tailored cover letter for this job application.
+
+TONE: {tone_instructions}
+
+APPLICANT RESUME:
+{resume_text[:1500] if resume_text else "No resume provided"}
+
+COMPANY: {company}
+ROLE: {role}
+JOB DESCRIPTION:
+{job_description[:1000] if job_description else "Not provided"}
+
+Requirements:
+- 3 paragraphs: hook + why you fit + why this company + call to action
+- Under 300 words
+- Specific: reference actual skills/experience from resume
+- Do NOT use generic phrases like "I am writing to express my interest"
+- Start with something compelling about your fit or the company
+- No placeholder text like [Your Name] - write the actual letter body only (no header/date/address)
+- No em dashes or en dashes anywhere"""
+
+    resp = client.messages.create(
+        model=MODEL,
+        max_tokens=600,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return _clean_dashes(resp.content[0].text.strip())
+
+
 async def filter_hiring_posts(posts: list) -> list:
     """
     Use Claude to filter a batch of scraped posts to only genuine personal hiring announcements.

@@ -20,6 +20,7 @@ class AlertCreate(BaseModel):
     platforms: Optional[List[str]] = None
     date_preset: str = "24h"
     label: Optional[str] = None
+    webhook_url: Optional[str] = None
 
 
 @router.get("")
@@ -47,6 +48,7 @@ async def create_alert(
         "created_at": __import__("datetime").datetime.utcnow().isoformat(),
         "last_checked": None,
         "last_count": 0,
+        "webhook_url": payload.webhook_url,
     }
     alerts.append(new_alert)
     prefs["alerts"] = alerts

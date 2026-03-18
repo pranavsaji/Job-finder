@@ -26,6 +26,8 @@ class Job(Base):
     status = Column(String(50), default="new")  # new, saved, applied, archived
     matched_role = Column(String(500), nullable=True)
     salary_range = Column(String(200), nullable=True)
+    match_score = Column(Integer, nullable=True)
+    follow_up_at = Column(DateTime, nullable=True)
 
     def to_dict(self):
         return {
@@ -48,4 +50,6 @@ class Job(Base):
             "status": self.status,
             "matched_role": self.matched_role,
             "salary_range": self.salary_range,
+            "match_score": self.match_score,
+            "follow_up_at": self.follow_up_at.isoformat() if self.follow_up_at else None,
         }

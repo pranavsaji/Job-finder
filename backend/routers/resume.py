@@ -1,3 +1,9 @@
+import json
+import re
+import os
+from typing import Optional
+
+import anthropic
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -60,6 +66,26 @@ async def upload_resume(
     current_user.resume_filename = filename
     db.commit()
     db.refresh(current_user)
+
+    # Save a version snapshot
+    try:
+        from backend.models.resume_version import ResumeVersion
+        existing_count = (
+            db.query(ResumeVersion)
+            .filter(ResumeVersion.user_id == current_user.id)
+            .count()
+        )
+        label = filename or f"Version {existing_count + 1}"
+        version = ResumeVersion(
+            user_id=current_user.id,
+            label=label,
+            resume_text=parsed["raw_text"],
+            filename=filename,
+        )
+        db.add(version)
+        db.commit()
+    except Exception as _ve:
+        print(f"Resume version save error: {_ve}")
 
     return {
         "message": "Resume uploaded and parsed successfully.",
@@ -172,3 +198,148 @@ async def generate_resume(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Resume Version History ───────────────────────────────────────────────────
+
+@router.get("/versions")
+def list_resume_versions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all resume versions for the current user (metadata only, no text)."""
+    from backend.models.resume_version import ResumeVersion
+    versions = (
+        db.query(ResumeVersion)
+        .filter(ResumeVersion.user_id == current_user.id)
+        .order_by(ResumeVersion.created_at.desc())
+        .all()
+    )
+    # Return metadata without resume_text to keep response small
+    result = []
+    for v in versions:
+        d = v.to_dict()
+        d.pop("resume_text", None)
+        result.append(d)
+    return {"versions": result}
+
+
+@router.get("/versions/{version_id}")
+def get_resume_version(
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get a full resume version including text."""
+    from backend.models.resume_version import ResumeVersion
+    version = (
+        db.query(ResumeVersion)
+        .filter(ResumeVersion.id == version_id, ResumeVersion.user_id == current_user.id)
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+    return version.to_dict()
+
+
+@router.delete("/versions/{version_id}")
+def delete_resume_version(
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a resume version."""
+    from backend.models.resume_version import ResumeVersion
+    version = (
+        db.query(ResumeVersion)
+        .filter(ResumeVersion.id == version_id, ResumeVersion.user_id == current_user.id)
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+    db.delete(version)
+    db.commit()
+    return {"deleted": version_id}
+
+
+@router.post("/versions/{version_id}/restore")
+def restore_resume_version(
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Restore a version's text and filename back to the user's active resume."""
+    from backend.models.resume_version import ResumeVersion
+    version = (
+        db.query(ResumeVersion)
+        .filter(ResumeVersion.id == version_id, ResumeVersion.user_id == current_user.id)
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+
+    current_user.resume_text = version.resume_text
+    current_user.resume_filename = version.filename
+    db.commit()
+    db.refresh(current_user)
+    return {
+        "message": "Resume restored successfully.",
+        "filename": version.filename,
+        "character_count": len(version.resume_text) if version.resume_text else 0,
+    }
+
+
+# ── LinkedIn Profile Optimizer ───────────────────────────────────────────────
+
+class LinkedInOptimizeRequest(BaseModel):
+    headline: Optional[str] = None
+    about: Optional[str] = None
+    experience_bullets: Optional[str] = None
+    target_role: Optional[str] = None
+    target_company: Optional[str] = None
+
+
+@router.post("/linkedin-optimize")
+def optimize_linkedin(
+    payload: LinkedInOptimizeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Analyze and optimize a LinkedIn profile using Claude."""
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    prompt = f"""Analyze and optimize this LinkedIn profile for job searching.
+
+Target Role: {payload.target_role or 'Not specified'}
+Target Company: {payload.target_company or 'Not specified'}
+
+Current Headline: {payload.headline or 'Not provided'}
+Current About: {payload.about or 'Not provided'}
+Experience Bullets: {payload.experience_bullets or 'Not provided'}
+
+Resume on file (excerpt): {(current_user.resume_text or '')[:600]}
+
+Return JSON:
+{{
+  "headline_score": <0-100>,
+  "about_score": <0-100>,
+  "overall_score": <0-100>,
+  "rewritten_headline": "<new headline under 120 chars>",
+  "rewritten_about": "<new about section, 3 short paragraphs, under 300 words>",
+  "keyword_gaps": ["<missing keyword 1>", "<missing keyword 2>"],
+  "quick_wins": ["<actionable tip 1>", "<tip 2>", "<tip 3>"],
+  "seo_tips": "<2 sentences on LinkedIn search optimization>"
+}}"""
+
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=800,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = resp.content[0].text.strip()
+    m = re.search(r'\{.*\}', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group())
+        except json.JSONDecodeError:
+            pass
+    return {"error": "Could not parse response"}

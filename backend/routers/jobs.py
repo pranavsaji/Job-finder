@@ -298,6 +298,35 @@ async def delete_job(
     db.commit()
 
 
+@router.post("/{job_id}/score")
+async def score_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Score the current user's resume match against a specific job."""
+    job = _user_jobs_query(db, current_user.id).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    from backend.services.match_service import score_job_match
+    import asyncio as _asyncio
+
+    loop = _asyncio.get_event_loop()
+    match_score = await loop.run_in_executor(
+        None,
+        score_job_match,
+        current_user.resume_text or "",
+        job.title or "",
+        job.company or "",
+        job.post_content or "",
+    )
+    job.match_score = match_score
+    db.commit()
+    db.refresh(job)
+    return {"match_score": match_score}
+
+
 async def _run_scrape_and_save(
     user_id: int,
     roles: list,
@@ -307,6 +336,7 @@ async def _run_scrape_and_save(
     enrich_with_claude: bool,
 ):
     """Background task to scrape and save jobs for a specific user."""
+    import os as _os
     from backend.models.database import SessionLocal
 
     jobs_data = await scrape_all(
@@ -356,3 +386,13 @@ async def _run_scrape_and_save(
         db.rollback()
     finally:
         db.close()
+
+    # Background score new jobs if user has a resume
+    try:
+        db_url = _os.getenv("DATABASE_URL", "sqlite:///./job_finder.db")
+        from backend.services.match_service import _score_jobs_for_user
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            pool.submit(_score_jobs_for_user, user_id, db_url)
+    except Exception as e:
+        print(f"Background scoring trigger error: {e}")

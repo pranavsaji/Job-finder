@@ -15,6 +15,7 @@ import {
   Eye,
   Flame,
   Heart,
+  History,
   Loader2,
   Mic,
   MicOff,
@@ -26,17 +27,19 @@ import {
   Shield,
   ShieldAlert,
   Swords,
+  Terminal,
   Timer,
   Trophy,
   Users,
   Video,
   VideoOff,
   Volume2,
+  X,
   XCircle,
   Zap,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { jobsApi, mockApi } from "@/lib/api";
+import { jobsApi, mockApi, mockAnalyticsApi } from "@/lib/api";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 
@@ -150,6 +153,17 @@ export default function MockPage() {
   // Code editor
   const [code, setCode] = useState("// Write your solution here\n");
   const [codeLanguage, setCodeLanguage] = useState("javascript");
+  const [codeOutput, setCodeOutput] = useState<{ stdout: string; stderr: string; exit_code: number } | null>(null);
+  const [running, setRunning] = useState(false);
+  const [stdin, setStdin] = useState("");
+
+  // History / Analytics
+  const [showHistory, setShowHistory] = useState(false);
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState(false);
+  const [analyticsTab, setAnalyticsTab] = useState<"sessions" | "analytics">("sessions");
+  const [analytics, setAnalytics] = useState<any | null>(null);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
 
   // Anti-cheat
   const tabSwitchRef = useRef(0);
@@ -380,17 +394,241 @@ export default function MockPage() {
     return `${m}:${sec.toString().padStart(2, "0")}`;
   }
 
+  async function runCode() {
+    setRunning(true);
+    setCodeOutput(null);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("jif_token") : "";
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const res = await fetch(`${apiUrl}/mock/execute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ language: codeLanguage, code, stdin }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setCodeOutput({ stdout: data.stdout || "", stderr: data.stderr || "", exit_code: data.exit_code ?? 0 });
+    } catch {
+      toast.error("Code execution failed");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function loadHistory() {
+    setLoadingSessions(true);
+    try {
+      const res = await mockApi.listSessions();
+      setSessions(res.data || []);
+    } catch {
+      toast.error("Failed to load sessions");
+    } finally {
+      setLoadingSessions(false);
+    }
+  }
+
+  async function loadAnalytics() {
+    setLoadingAnalytics(true);
+    try {
+      const res = await mockAnalyticsApi.get();
+      setAnalytics(res.data);
+    } catch {
+      // no analytics yet
+    } finally {
+      setLoadingAnalytics(false);
+    }
+  }
+
+  async function openHistory() {
+    setShowHistory(true);
+    await loadHistory();
+    await loadAnalytics();
+  }
+
+  async function deleteSession(id: number) {
+    try {
+      await mockApi.deleteSession(id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+      toast.success("Session deleted");
+    } catch {
+      toast.error("Failed to delete session");
+    }
+  }
+
   const selectedTypeConfig = INTERVIEW_TYPES.find(t => t.id === selectedType)!;
   const selectedDiffConfig = DIFFICULTIES.find(d => d.id === difficulty)!;
   const displayInput = input + (interimText ? " " + interimText : "");
 
   // ── Render: Setup ──────────────────────────────────────────────────────
 
+  if (showHistory) return (
+    <div className="max-w-3xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold gradient-text">Interview History</h1>
+          <p className="text-white/40 text-sm mt-1">Past sessions and analytics</p>
+        </div>
+        <button onClick={() => setShowHistory(false)} className="btn-secondary text-sm">
+          <X size={14} /> Back to Setup
+        </button>
+      </div>
+
+      {/* Analytics / Sessions tab switcher */}
+      <div className="flex gap-1.5">
+        {(["sessions", "analytics"] as const).map((t) => (
+          <button key={t} onClick={() => setAnalyticsTab(t)}
+            className="px-4 py-1.5 rounded-lg text-xs font-medium transition-all capitalize"
+            style={analyticsTab === t
+              ? { background: "rgba(139,92,246,0.25)", border: "1px solid rgba(139,92,246,0.4)", color: "#c4b5fd" }
+              : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)" }}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {analyticsTab === "analytics" ? (
+        loadingAnalytics ? (
+          <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="skeleton h-24 rounded-xl" />)}</div>
+        ) : !analytics ? (
+          <div className="glass-card p-14 text-center">
+            <Swords size={36} className="mx-auto mb-3 text-white/10" />
+            <p className="text-white/35 text-sm">No analytics data yet. Complete some interviews first.</p>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {/* Summary stats */}
+            <div className="grid grid-cols-3 gap-4">
+              {[
+                { label: "Total Sessions", value: analytics.total_sessions ?? 0, color: "#a78bfa" },
+                { label: "Avg Score", value: analytics.avg_score != null ? Math.round(analytics.avg_score) : "—", color: "#4ade80" },
+                { label: "Pass Rate", value: analytics.pass_rate != null ? `${Math.round(analytics.pass_rate * 100)}%` : "—", color: "#60a5fa" },
+              ].map((s) => (
+                <div key={s.label} className="glass-card p-5 text-center">
+                  <div className="text-3xl font-bold mb-1" style={{ color: s.color }}>{s.value}</div>
+                  <div className="text-white/40 text-xs">{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Score over time — SVG line chart */}
+            {analytics.scores_over_time && analytics.scores_over_time.length > 1 && (
+              <div className="glass-card p-5">
+                <h3 className="text-white/60 text-xs font-semibold uppercase tracking-wider mb-4">Score Over Time (Last 10)</h3>
+                {(() => {
+                  const pts: number[] = analytics.scores_over_time.slice(-10);
+                  const minV = Math.min(...pts);
+                  const maxV = Math.max(...pts);
+                  const range = maxV - minV || 1;
+                  const W = 360; const H = 90; const PAD = 10;
+                  const xs = pts.map((_, i) => PAD + (i / (pts.length - 1)) * (W - PAD * 2));
+                  const ys = pts.map((v) => H - PAD - ((v - minV) / range) * (H - PAD * 2));
+                  const d = xs.map((x, i) => `${i === 0 ? "M" : "L"}${x},${ys[i]}`).join(" ");
+                  return (
+                    <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
+                      <polyline points={xs.map((x, i) => `${x},${ys[i]}`).join(" ")}
+                        fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      {xs.map((x, i) => (
+                        <g key={i}>
+                          <circle cx={x} cy={ys[i]} r="3" fill="#a78bfa" />
+                          <text x={x} y={ys[i] - 6} textAnchor="middle" fill="rgba(255,255,255,0.4)" fontSize="8">{pts[i]}</text>
+                        </g>
+                      ))}
+                    </svg>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Avg score per type */}
+            {analytics.by_type && Object.keys(analytics.by_type).length > 0 && (
+              <div className="glass-card p-5">
+                <h3 className="text-white/60 text-xs font-semibold uppercase tracking-wider mb-4">Avg Score by Type</h3>
+                <div className="space-y-2.5">
+                  {Object.entries(analytics.by_type as Record<string, number>).map(([type, avg]) => {
+                    const maxAvg = Math.max(...Object.values(analytics.by_type as Record<string, number>));
+                    const pct = maxAvg > 0 ? (avg / maxAvg) * 100 : 0;
+                    const color = avg >= 70 ? "#4ade80" : avg >= 55 ? "#f59e0b" : "#f87171";
+                    return (
+                      <div key={type} className="flex items-center gap-3">
+                        <span className="text-white/50 text-xs w-28 flex-shrink-0 capitalize">{type.replace("_", " ")}</span>
+                        <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+                          <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, background: color }} />
+                        </div>
+                        <span className="text-xs font-bold w-8 text-right flex-shrink-0" style={{ color }}>{Math.round(avg)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      ) : (
+        /* Sessions list */
+        loadingSessions ? (
+          <div className="space-y-3">{[...Array(4)].map((_, i) => <div key={i} className="skeleton h-20 rounded-xl" />)}</div>
+        ) : sessions.length === 0 ? (
+          <div className="glass-card p-14 text-center">
+            <Swords size={36} className="mx-auto mb-3 text-white/10" />
+            <p className="text-white/35 text-sm">No sessions yet. Start your first interview!</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {sessions.map((s) => {
+              const ev = s.evaluation_result;
+              const verdictColor = ev?.verdict === "pass" ? "#4ade80" : ev?.verdict === "conditional_pass" ? "#f59e0b" : ev ? "#f87171" : "#94a3b8";
+              return (
+                <div key={s.id} className="glass-card p-4 flex items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-white/80 text-sm font-semibold">{s.company}</span>
+                      <span className="text-white/30 text-xs">·</span>
+                      <span className="text-white/50 text-xs">{s.role}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <span className="text-white/35">{s.interview_type?.replace("_", " ")}</span>
+                      <span className="text-white/20">·</span>
+                      <span className="text-white/35">{s.difficulty}</span>
+                      {s.created_at && (
+                        <>
+                          <span className="text-white/20">·</span>
+                          <span className="text-white/25">{new Date(s.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {ev && (
+                    <div className="text-center flex-shrink-0">
+                      <div className="text-xl font-black" style={{ color: verdictColor }}>{ev.overall_score}</div>
+                      <div className="text-[10px] font-semibold" style={{ color: verdictColor }}>
+                        {ev.verdict === "pass" ? "PASS" : ev.verdict === "conditional_pass" ? "COND." : "FAIL"}
+                      </div>
+                    </div>
+                  )}
+                  <button onClick={() => deleteSession(s.id)}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-red-400/40 hover:text-red-400 transition-colors flex-shrink-0"
+                    style={{ background: "rgba(248,113,113,0.05)", border: "1px solid rgba(248,113,113,0.1)" }}>
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )
+      )}
+    </div>
+  );
+
   if (stage === "setup") return (
     <div className="max-w-3xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold gradient-text">Mock Interview</h1>
-        <p className="text-white/40 text-sm mt-1">Realistic AI-powered interview simulation with voice, video, live coding, and brutal evaluation</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold gradient-text">Mock Interview</h1>
+          <p className="text-white/40 text-sm mt-1">Realistic AI-powered interview simulation with voice, video, live coding, and brutal evaluation</p>
+        </div>
+        <button onClick={openHistory} className="btn-secondary text-sm">
+          <History size={14} /> History
+        </button>
       </div>
 
       {/* Job source */}
@@ -623,37 +861,94 @@ export default function MockPage() {
 
         {/* Right: code editor (coding round only) */}
         {selectedType === "coding" && (
-          <div className="w-[48%] glass-card overflow-hidden flex flex-col" style={{ height: "560px" }}>
-            <div className="flex items-center justify-between px-4 py-2.5" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-              <span className="text-white/60 text-xs font-medium">Code Editor</span>
-              <select value={codeLanguage} onChange={e => setCodeLanguage(e.target.value)}
-                className="text-xs bg-transparent text-white/40 outline-none">
-                {["javascript","typescript","python","java","cpp","go","rust"].map(l => <option key={l} value={l}>{l}</option>)}
-              </select>
-              {cheatWarning && (
-                <span className="text-xs text-red-400 flex items-center gap-1">
-                  <ShieldAlert size={11} /> Cheat detected
-                </span>
-              )}
+          <div className="w-[48%] flex flex-col gap-3">
+            <div className="glass-card overflow-hidden flex flex-col" style={{ height: codeOutput ? "380px" : "560px" }}>
+              <div className="flex items-center justify-between px-4 py-2.5" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+                <span className="text-white/60 text-xs font-medium">Code Editor</span>
+                <div className="flex items-center gap-2">
+                  <select value={codeLanguage} onChange={e => setCodeLanguage(e.target.value)}
+                    className="text-xs bg-transparent text-white/40 outline-none">
+                    {["javascript","typescript","python","java","cpp","go","rust"].map(l => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                  {cheatWarning && (
+                    <span className="text-xs text-red-400 flex items-center gap-1">
+                      <ShieldAlert size={11} /> Cheat detected
+                    </span>
+                  )}
+                  <button
+                    onClick={runCode}
+                    disabled={running || !code.trim()}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
+                    style={{ background: "rgba(74,222,128,0.15)", border: "1px solid rgba(74,222,128,0.3)", color: "#4ade80" }}
+                  >
+                    {running ? <Loader2 size={11} className="animate-spin" /> : <Terminal size={11} />}
+                    {running ? "Running..." : "Run ▶"}
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1">
+                <MonacoEditor
+                  height="100%"
+                  language={codeLanguage}
+                  value={code}
+                  onChange={v => setCode(v || "")}
+                  theme="vs-dark"
+                  options={{
+                    fontSize: 13,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    wordWrap: "on",
+                    lineNumbers: "on",
+                    padding: { top: 12 },
+                    suggestOnTriggerCharacters: true,
+                  }}
+                />
+              </div>
             </div>
-            <div className="flex-1">
-              <MonacoEditor
-                height="100%"
-                language={codeLanguage}
-                value={code}
-                onChange={v => setCode(v || "")}
-                theme="vs-dark"
-                options={{
-                  fontSize: 13,
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  wordWrap: "on",
-                  lineNumbers: "on",
-                  padding: { top: 12 },
-                  suggestOnTriggerCharacters: true,
-                }}
-              />
-            </div>
+
+            {/* Output panel */}
+            {codeOutput && (
+              <div className="glass-card p-3 flex-shrink-0">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Terminal size={12} className="text-white/40" />
+                    <span className="text-white/50 text-xs font-medium">Output</span>
+                    <span
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                      style={{
+                        background: codeOutput.exit_code === 0 ? "rgba(74,222,128,0.12)" : "rgba(248,113,113,0.12)",
+                        color: codeOutput.exit_code === 0 ? "#4ade80" : "#f87171",
+                        border: `1px solid ${codeOutput.exit_code === 0 ? "rgba(74,222,128,0.25)" : "rgba(248,113,113,0.25)"}`,
+                      }}
+                    >
+                      exit {codeOutput.exit_code}
+                    </span>
+                  </div>
+                  <button onClick={() => setCodeOutput(null)} className="text-white/25 hover:text-white/50 text-xs transition-colors">
+                    <X size={12} />
+                  </button>
+                </div>
+                {codeOutput.stdout && (
+                  <pre
+                    className="text-xs leading-relaxed mb-1.5 overflow-auto max-h-24 rounded-lg p-2"
+                    style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.12)", color: "#86efac" }}
+                  >
+                    {codeOutput.stdout}
+                  </pre>
+                )}
+                {codeOutput.stderr && (
+                  <pre
+                    className="text-xs leading-relaxed overflow-auto max-h-20 rounded-lg p-2"
+                    style={{ background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)", color: "#fca5a5" }}
+                  >
+                    {codeOutput.stderr}
+                  </pre>
+                )}
+                {!codeOutput.stdout && !codeOutput.stderr && (
+                  <p className="text-white/25 text-xs">(no output)</p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

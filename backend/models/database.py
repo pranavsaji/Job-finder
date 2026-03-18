@@ -37,4 +37,7 @@ def create_tables():
     from backend.models.draft import Draft
     from backend.models.prep_pack import PrepPackRecord  # noqa: F401
     from backend.models.mock_session import MockSession  # noqa: F401
+    from backend.models.pipeline import PipelineEntry  # noqa: F401
+    from backend.models.resume_version import ResumeVersion  # noqa: F401
+    from backend.models.contact import Contact  # noqa: F401
     Base.metadata.create_all(bind=engine)

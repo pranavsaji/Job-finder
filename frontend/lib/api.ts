@@ -203,6 +203,8 @@ export interface Job {
   status: string;
   matched_role: string | null;
   salary_range: string | null;
+  match_score?: number | null;
+  follow_up_at?: string | null;
 }
 
 export interface Person {
@@ -424,3 +426,88 @@ export const mockApi = {
 
   deleteSession: (id: number) => getApi().delete(`/mock/sessions/${id}`),
 };
+
+// Pipeline API
+export const pipelineApi = {
+  list: () => getApi().get("/pipeline"),
+  stats: () => getApi().get("/pipeline/stats"),
+  create: (data: { company: string; role: string; stage?: string; job_id?: number; notes?: string; follow_up_at?: string }) =>
+    getApi().post("/pipeline", data),
+  get: (id: number) => getApi().get(`/pipeline/${id}`),
+  updateStage: (id: number, stage: string, note?: string) =>
+    getApi().put(`/pipeline/${id}/stage`, { stage, note }),
+  update: (id: number, data: { notes?: string; follow_up_at?: string | null; offer_amount?: string; offer_details?: string }) =>
+    getApi().put(`/pipeline/${id}`, data),
+  addContact: (id: number, contact: { name: string; title?: string; email?: string; linkedin_url?: string; notes?: string }) =>
+    getApi().post(`/pipeline/${id}/contacts`, contact),
+  removeContact: (id: number, idx: number) =>
+    getApi().delete(`/pipeline/${id}/contacts/${idx}`),
+  delete: (id: number) => getApi().delete(`/pipeline/${id}`),
+};
+
+// Reminders API
+export const remindersApi = {
+  due: () => getApi().get("/reminders/due"),
+  setFollowUp: (jobId: number, followUpAt: string | null) =>
+    getApi().put(`/reminders/${jobId}`, { follow_up_at: followUpAt }),
+  pipelineDue: () => getApi().get("/reminders/pipeline"),
+};
+
+// Dashboard API
+export const dashboardApi = {
+  summary: () => getApi().get("/dashboard/summary"),
+};
+
+// Salary API
+export const salaryApi = {
+  intelligence: () => getApi().get("/salary/intelligence"),
+  research: (data: { role: string; company?: string; location?: string; level?: string }) =>
+    getApi().post("/salary/research", data, { timeout: 30000 }),
+};
+
+// Contacts API
+export const contactsApi = {
+  list: (params?: { status?: string; company?: string }) => getApi().get("/contacts", { params }),
+  create: (data: { name: string; title?: string; company?: string; linkedin_url?: string; email?: string; source?: string; notes?: string; job_id?: number }) =>
+    getApi().post("/contacts", data),
+  update: (id: number, data: { title?: string; company?: string; email?: string; status?: string; notes?: string; last_contact_at?: string }) =>
+    getApi().put(`/contacts/${id}`, data),
+  delete: (id: number) => getApi().delete(`/contacts/${id}`),
+  fromNetwork: (people: Array<{ name: string; title?: string; company?: string; linkedin_url?: string }>) =>
+    getApi().post("/contacts/from-network", { people }),
+};
+
+// Extended Resume API additions
+export const resumeVersionsApi = {
+  list: () => getApi().get("/resume/versions"),
+  get: (id: number) => getApi().get(`/resume/versions/${id}`),
+  delete: (id: number) => getApi().delete(`/resume/versions/${id}`),
+  restore: (id: number) => getApi().post(`/resume/versions/${id}/restore`),
+};
+
+export const linkedinOptimizeApi = {
+  optimize: (data: { headline?: string; about?: string; experience_bullets?: string; target_role?: string; target_company?: string }) =>
+    getApi().post("/resume/linkedin-optimize", data, { timeout: 30000 }),
+};
+
+// Cover Letter API
+export const coverLetterApi = {
+  generate: (data: { company: string; role: string; job_id?: number; job_description?: string; tone?: string }) =>
+    getApi().post("/drafts/cover-letter", data, { timeout: 30000 }),
+};
+
+// Extended Jobs API — job match scoring
+export const jobMatchApi = {
+  score: (jobId: number) => getApi().post(`/jobs/${jobId}/score`),
+};
+
+// Mock analytics
+export const mockAnalyticsApi = {
+  get: () => getApi().get("/mock/analytics"),
+};
+
+// Extended Job type with new fields
+export interface JobExtended extends Job {
+  match_score?: number | null;
+  follow_up_at?: string | null;
+}

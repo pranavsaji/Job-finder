@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, Briefcase, MessageSquare, Settings, Zap, FileText,
-  Radar, Bell, Network, BookOpen, Swords,
+  Radar, Bell, Network, BookOpen, Swords, KanbanSquare, DollarSign, Users2,
 } from "lucide-react";
 
 const coreNav = [
@@ -20,6 +20,9 @@ const intelligenceNav = [
   { href: "/network", icon: Network, label: "Network", tip: "Hiring managers & alumni" },
   { href: "/prep", icon: BookOpen, label: "Prep", tip: "Interview prep packs" },
   { href: "/mock", icon: Swords, label: "Mock Interview", tip: "Live AI interview simulation" },
+  { href: "/pipeline", icon: KanbanSquare, label: "Pipeline", tip: "Application tracking & CRM" },
+  { href: "/salary", icon: DollarSign, label: "Salary", tip: "Salary intelligence & research" },
+  { href: "/contacts", icon: Users2, label: "Contacts", tip: "Referral & contact tracker" },
 ];
 
 const bottomNav = [

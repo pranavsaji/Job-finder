@@ -10,6 +10,8 @@ load_dotenv()
 from backend.models.database import create_tables
 from backend.routers import auth, jobs, resume, person, drafts, email_finder, admin as admin_router
 from backend.routers import signals, alerts, network, prep, mock_interview
+from backend.routers import pipeline as pipeline_router, reminders as reminders_router
+from backend.routers import dashboard as dashboard_router, salary as salary_router, contacts as contacts_router
 
 CORS_ORIGINS = [
     "http://localhost:3000",
@@ -67,6 +69,11 @@ app.include_router(alerts.router)
 app.include_router(network.router)
 app.include_router(prep.router)
 app.include_router(mock_interview.router)
+app.include_router(pipeline_router.router)
+app.include_router(reminders_router.router)
+app.include_router(dashboard_router.router)
+app.include_router(salary_router.router)
+app.include_router(contacts_router.router)
 
 
 def _migrate_db():
@@ -90,6 +97,18 @@ def _migrate_db():
             conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN research_context TEXT"))
             conn.commit()
             print("Migration applied: mock_sessions.research_context")
+        except Exception:
+            pass  # Column already exists
+        try:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN follow_up_at DATETIME"))
+            conn.commit()
+            print("Migration applied: jobs.follow_up_at")
+        except Exception:
+            pass  # Column already exists
+        try:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN match_score INTEGER"))
+            conn.commit()
+            print("Migration applied: jobs.match_score")
         except Exception:
             pass  # Column already exists
 

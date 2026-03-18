@@ -333,3 +333,85 @@ def delete_session(
     db.delete(sess)
     db.commit()
     return {"deleted": session_id}
+
+
+# ── Code Execution ──────────────────────────────────────────────────────────
+
+class ExecuteCodeRequest(BaseModel):
+    language: str
+    code: str
+    stdin: str = ""
+
+
+@router.post("/execute")
+async def execute_code_endpoint(
+    payload: ExecuteCodeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Execute code via Piston API and return stdout/stderr/exit_code."""
+    from backend.services.code_runner import execute_code
+    result = await execute_code(payload.language, payload.code, payload.stdin)
+    return result
+
+
+# ── Analytics ───────────────────────────────────────────────────────────────
+
+@router.get("/analytics")
+def get_analytics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return performance trends across all completed sessions."""
+    sessions = (
+        db.query(MockSession)
+        .filter(MockSession.user_id == current_user.id, MockSession.status == "completed")
+        .order_by(MockSession.started_at.asc())
+        .all()
+    )
+
+    trends = []
+    by_type: Dict[str, List[Any]] = {}
+
+    for s in sessions:
+        if not s.evaluation:
+            continue
+        ev = s.evaluation
+        scores = ev.get("scores", {})
+        entry = {
+            "id": s.id,
+            "company": s.company,
+            "role": s.role,
+            "interview_type": s.interview_type,
+            "difficulty": s.difficulty,
+            "verdict": ev.get("verdict"),
+            "overall_score": ev.get("overall_score"),
+            "scores": scores,
+            "started_at": s.started_at.isoformat() if s.started_at else None,
+        }
+        trends.append(entry)
+
+        t = s.interview_type
+        if t not in by_type:
+            by_type[t] = []
+        by_type[t].append(ev.get("overall_score", 0))
+
+    # Averages per type
+    avg_by_type = {t: round(sum(v) / len(v)) for t, v in by_type.items()}
+
+    # Overall avg
+    all_scores = [e["overall_score"] for e in trends if e["overall_score"]]
+    overall_avg = round(sum(all_scores) / len(all_scores)) if all_scores else 0
+
+    return {
+        "trends": trends,
+        "avg_by_type": avg_by_type,
+        "overall_avg": overall_avg,
+        "total_sessions": len(trends),
+        "pass_rate": (
+            round(
+                len([e for e in trends if e["verdict"] == "pass"]) / len(trends) * 100
+            )
+            if trends
+            else 0
+        ),
+    }
