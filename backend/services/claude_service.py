@@ -38,7 +38,7 @@ async def draft_linkedin_message(
     """Draft a personalized LinkedIn DM based on job and person context."""
     client = _get_client()
 
-    poster_title = person_info.get("title", "").lower()
+    poster_title = (person_info.get("title") or "").lower()
     if any(word in poster_title for word in ["cto", "vp", "director", "chief", "president", "founder"]):
         tone = "formal and respectful"
     elif any(word in poster_title for word in ["engineer", "developer", "designer", "scientist"]):

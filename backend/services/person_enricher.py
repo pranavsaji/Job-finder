@@ -90,7 +90,7 @@ async def enrich_person(job: dict) -> dict:
             }
         ]
 
-    post_content = job.get("post_content", "").lower()
+    post_content = (job.get("post_content") or "").lower()
     skill_keywords = [
         "python", "javascript", "react", "node.js", "aws", "gcp", "azure",
         "machine learning", "ai", "data science", "product management",

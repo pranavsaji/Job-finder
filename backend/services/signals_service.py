@@ -150,8 +150,14 @@ def _extract_company_from_result(title: str, url: str, body: str) -> Optional[st
     for pat in url_patterns:
         m = _re.search(pat, url)
         if m:
-            slug = m.group(1).replace("-", " ").title()
+            slug = m.group(1).replace("-", " ").replace("_", " ").title()
             if slug and slug.lower() not in ("embed", "jobs", "apply"):
+                # Try to extract a cleaner name from title "Job Application for X at COMPANY"
+                at_m = _re.search(r"\bat\s+([A-Z][A-Za-z0-9&\.\s\-]+?)(?:\s*[\|\-]|\s*$)", title)
+                if at_m:
+                    candidate = at_m.group(1).strip()
+                    if 1 <= len(candidate.split()) <= 5:
+                        return candidate
                 return slug
 
     # Try title patterns
