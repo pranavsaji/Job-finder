@@ -12,12 +12,16 @@ import {
   Clock,
   Copy,
   DollarSign,
+  Headphones,
   Lightbulb,
   Loader2,
+  Mic,
+  MicOff,
   MessageSquare,
   Search,
   Send,
   Sparkles,
+  Volume2,
 } from "lucide-react";
 import axios from "axios";
 import toast from "react-hot-toast";
@@ -114,16 +118,169 @@ function InterviewAgent({
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [interimText, setInterimText] = useState("");
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const streamingTextRef = useRef("");
+  const voiceModeRef = useRef(false);
+
+  // Keep ref in sync so callbacks can read latest value
+  useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+      if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    };
+  }, []);
+
+  // --- TTS ---
+  function speakText(text: string) {
+    if (!voiceModeRef.current || typeof window === "undefined") return;
+    window.speechSynthesis.cancel();
+
+    // Strip markdown for natural speech
+    const clean = text
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/\*(.+?)\*/g, "$1")
+      .replace(/#+\s/g, "")
+      .replace(/```[\s\S]*?```/g, "code block omitted")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\n\n+/g, ". ")
+      .replace(/\n/g, " ")
+      .replace(/---+/g, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+    const utterance = new SpeechSynthesisUtterance(clean);
+
+    // Pick best English voice
+    const voices = window.speechSynthesis.getVoices();
+    const best =
+      voices.find((v) => v.lang.startsWith("en") && v.name.includes("Google") && !v.name.includes("UK")) ||
+      voices.find((v) => v.lang === "en-US" && !v.localService) ||
+      voices.find((v) => v.lang.startsWith("en")) ||
+      voices[0];
+    if (best) utterance.voice = best;
+    utterance.rate = 1.05;
+    utterance.pitch = 1.0;
+
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      // Auto-restart mic after AI finishes speaking
+      if (voiceModeRef.current) setTimeout(() => startListening(), 400);
+    };
+    utterance.onerror = () => setIsSpeaking(false);
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function stopSpeaking() {
+    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    setIsSpeaking(false);
+  }
+
+  // --- STT ---
+  function startListening() {
+    if (typeof window === "undefined") return;
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      toast.error("Voice not supported in this browser. Use Chrome or Edge.");
+      return;
+    }
+
+    stopSpeaking();
+
+    const recog = new SR();
+    recognitionRef.current = recog;
+    recog.continuous = false;
+    recog.interimResults = true;
+    recog.lang = "en-US";
+
+    recog.onstart = () => setIsListening(true);
+
+    recog.onresult = (e: any) => {
+      let final = "";
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
+      }
+      if (final) {
+        const combined = (input + " " + final).trim();
+        setInput(combined);
+        setInterimText("");
+      } else {
+        setInterimText(interim);
+      }
+    };
+
+    recog.onend = () => {
+      setIsListening(false);
+      setInterimText("");
+      // Auto-send if we have text and voice mode is on
+      setInput((prev) => {
+        if (prev.trim() && voiceModeRef.current) {
+          setTimeout(() => sendMessage(prev), 100);
+        }
+        return prev;
+      });
+    };
+
+    recog.onerror = (e: any) => {
+      if (e.error !== "no-speech" && e.error !== "aborted") {
+        toast.error(`Mic error: ${e.error}`);
+      }
+      setIsListening(false);
+    };
+
+    recog.start();
+  }
+
+  function stopListening() {
+    recognitionRef.current?.stop();
+    setIsListening(false);
+  }
+
+  function toggleMic() {
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  }
+
+  function toggleVoiceMode() {
+    if (voiceMode) {
+      stopSpeaking();
+      stopListening();
+      setVoiceMode(false);
+    } else {
+      setVoiceMode(true);
+      // Greet the user with a prompt
+      setTimeout(() => startListening(), 300);
+    }
+  }
+
+  // --- Send ---
   async function sendMessage(text: string) {
     const trimmed = text.trim();
     if (!trimmed || streaming) return;
+
+    stopListening();
+    stopSpeaking();
+    streamingTextRef.current = "";
 
     const userMsg: ChatMsg = { role: "user", content: trimmed };
     const assistantPlaceholder: ChatMsg = { role: "assistant", content: "" };
@@ -146,23 +303,22 @@ function InterviewAgent({
           message: trimmed,
         },
         (chunk) => {
+          streamingTextRef.current += chunk;
           setMessages((prev) => {
             const updated = [...prev];
             const last = updated[updated.length - 1];
             if (last.role === "assistant") {
-              updated[updated.length - 1] = {
-                ...last,
-                content: last.content + chunk,
-              };
+              updated[updated.length - 1] = { ...last, content: last.content + chunk };
             }
             return updated;
           });
         },
         () => {
           setStreaming(false);
+          if (streamingTextRef.current) speakText(streamingTextRef.current);
         },
       );
-    } catch (err: any) {
+    } catch {
       setMessages((prev) => {
         const updated = [...prev];
         updated[updated.length - 1] = {
@@ -183,11 +339,13 @@ function InterviewAgent({
     }
   }
 
+  const displayInput = input + (interimText ? " " + interimText : "");
+
   return (
     <div className="glass-card overflow-hidden flex flex-col">
       {/* Header */}
       <div
-        className="flex items-center gap-3 px-5 py-4"
+        className="flex items-center gap-3 px-5 py-3.5"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
       >
         <div
@@ -196,13 +354,43 @@ function InterviewAgent({
         >
           <Bot size={15} className="text-purple-400" />
         </div>
-        <div>
+        <div className="flex-1">
           <div className="flex items-center gap-1.5">
             <span className="text-white/85 text-sm font-semibold">Interview Agent</span>
             <Sparkles size={11} className="text-purple-400" />
+            {voiceMode && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                style={{ background: "rgba(34,197,94,0.15)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.25)" }}>
+                {isListening ? "● Listening..." : isSpeaking ? "◆ Speaking..." : "Voice On"}
+              </span>
+            )}
           </div>
-          <p className="text-white/35 text-xs">Ask anything about this interview</p>
+          <p className="text-white/30 text-xs">
+            {voiceMode
+              ? isListening ? "Speak now — I'm listening"
+                : isSpeaking ? "Playing response..."
+                : "Voice mode active — mic will open after each reply"
+              : "Ask anything · type or use voice"}
+          </p>
         </div>
+
+        {/* Voice mode toggle */}
+        <button
+          onClick={toggleVoiceMode}
+          title={voiceMode ? "Turn off voice mode" : "Turn on voice mode (hands-free back-and-forth)"}
+          className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
+          style={voiceMode ? {
+            background: "rgba(34,197,94,0.2)",
+            border: "1px solid rgba(34,197,94,0.4)",
+          } : {
+            background: "rgba(255,255,255,0.05)",
+            border: "1px solid rgba(255,255,255,0.1)",
+          }}
+        >
+          {voiceMode
+            ? <Headphones size={14} className="text-green-400" />
+            : <Headphones size={14} className="text-white/40" />}
+        </button>
       </div>
 
       {/* Messages */}
@@ -228,59 +416,40 @@ function InterviewAgent({
                 </button>
               ))}
             </div>
+            {!voiceMode && (
+              <p className="text-white/15 text-[11px] text-center">
+                Tip: click the 🎧 headphones to enable voice mode for a real interview simulation
+              </p>
+            )}
           </div>
         )}
 
         {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-          >
+          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             {msg.role === "assistant" && (
               <div
                 className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 mr-2"
-                style={{
-                  background: "rgba(139,92,246,0.18)",
-                  border: "1px solid rgba(139,92,246,0.25)",
-                }}
+                style={{ background: "rgba(139,92,246,0.18)", border: "1px solid rgba(139,92,246,0.25)" }}
               >
                 <Bot size={11} className="text-purple-400" />
               </div>
             )}
             <div
               className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-                msg.role === "user"
-                  ? "rounded-tr-sm"
-                  : "rounded-tl-sm"
+                msg.role === "user" ? "rounded-tr-sm" : "rounded-tl-sm"
               }`}
               style={
                 msg.role === "user"
-                  ? {
-                      background: "rgba(139,92,246,0.25)",
-                      border: "1px solid rgba(139,92,246,0.35)",
-                      color: "rgba(255,255,255,0.9)",
-                    }
-                  : {
-                      background: "rgba(255,255,255,0.05)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      color: "rgba(255,255,255,0.75)",
-                    }
+                  ? { background: "rgba(139,92,246,0.25)", border: "1px solid rgba(139,92,246,0.35)", color: "rgba(255,255,255,0.9)" }
+                  : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.75)" }
               }
             >
               {msg.content === "" && msg.role === "assistant" ? (
                 <span className="flex items-center gap-1">
-                  <span
-                    className="inline-block w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce"
-                    style={{ animationDelay: "0ms" }}
-                  />
-                  <span
-                    className="inline-block w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce"
-                    style={{ animationDelay: "150ms" }}
-                  />
-                  <span
-                    className="inline-block w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce"
-                    style={{ animationDelay: "300ms" }}
-                  />
+                  {[0, 150, 300].map((delay) => (
+                    <span key={delay} className="inline-block w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce"
+                      style={{ animationDelay: `${delay}ms` }} />
+                  ))}
                 </span>
               ) : (
                 <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
@@ -288,28 +457,74 @@ function InterviewAgent({
             </div>
           </div>
         ))}
+
+        {/* Speaking waveform indicator */}
+        {isSpeaking && (
+          <div className="flex justify-start">
+            <div className="w-6 h-6 rounded-lg flex items-center justify-center mr-2 flex-shrink-0"
+              style={{ background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.25)" }}>
+              <Volume2 size={11} className="text-green-400" />
+            </div>
+            <div className="flex items-center gap-0.5 px-3 py-2 rounded-2xl rounded-tl-sm"
+              style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.15)" }}>
+              {[1, 3, 2, 4, 2, 3, 1].map((h, i) => (
+                <div key={i} className="w-0.5 rounded-full animate-pulse"
+                  style={{ height: `${h * 4}px`, background: "#4ade80", animationDelay: `${i * 80}ms` }} />
+              ))}
+              <span className="text-green-400/70 text-[10px] ml-2">Speaking</span>
+              <button onClick={stopSpeaking} className="ml-2 text-green-400/50 hover:text-green-400 text-[10px]">stop</button>
+            </div>
+          </div>
+        )}
+
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
+      {/* Input bar */}
       <div
         className="px-4 py-3 flex items-end gap-2"
         style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
       >
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask about the interview process, mock questions, salary…"
-          rows={1}
+        {/* Mic button */}
+        <button
+          onClick={toggleMic}
           disabled={streaming}
-          className="flex-1 resize-none rounded-xl px-3.5 py-2.5 text-sm text-white/80 placeholder:text-white/25 outline-none transition-all"
-          style={{
+          title={isListening ? "Stop listening" : "Start voice input"}
+          className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all relative disabled:opacity-40"
+          style={isListening ? {
+            background: "rgba(239,68,68,0.2)",
+            border: "1px solid rgba(239,68,68,0.5)",
+          } : {
             background: "rgba(255,255,255,0.05)",
             border: "1px solid rgba(255,255,255,0.1)",
+          }}
+        >
+          {isListening && (
+            <span className="absolute inset-0 rounded-xl animate-ping"
+              style={{ background: "rgba(239,68,68,0.2)" }} />
+          )}
+          {isListening
+            ? <MicOff size={14} className="text-red-400 relative z-10" />
+            : <Mic size={14} className="text-white/40 relative z-10" />}
+        </button>
+
+        <textarea
+          ref={textareaRef}
+          value={displayInput}
+          onChange={(e) => {
+            if (!isListening) setInput(e.target.value);
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder={isListening ? "Listening…" : "Ask about the interview, request a mock question, or speak with the mic…"}
+          rows={1}
+          disabled={streaming}
+          className="flex-1 resize-none rounded-xl px-3.5 py-2.5 text-sm text-white/80 placeholder:text-white/20 outline-none transition-all"
+          style={{
+            background: isListening ? "rgba(239,68,68,0.06)" : "rgba(255,255,255,0.05)",
+            border: isListening ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(255,255,255,0.1)",
             maxHeight: "120px",
             overflow: "auto",
+            color: interimText ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.8)",
           }}
           onInput={(e) => {
             const el = e.currentTarget;
@@ -317,20 +532,16 @@ function InterviewAgent({
             el.style.height = Math.min(el.scrollHeight, 120) + "px";
           }}
         />
+
         <button
           onClick={() => sendMessage(input)}
           disabled={streaming || !input.trim()}
           className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all disabled:opacity-40"
-          style={{
-            background: "rgba(139,92,246,0.3)",
-            border: "1px solid rgba(139,92,246,0.4)",
-          }}
+          style={{ background: "rgba(139,92,246,0.3)", border: "1px solid rgba(139,92,246,0.4)" }}
         >
-          {streaming ? (
-            <Loader2 size={14} className="text-purple-300 animate-spin" />
-          ) : (
-            <Send size={14} className="text-purple-300" />
-          )}
+          {streaming
+            ? <Loader2 size={14} className="text-purple-300 animate-spin" />
+            : <Send size={14} className="text-purple-300" />}
         </button>
       </div>
     </div>
