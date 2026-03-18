@@ -100,6 +100,14 @@ async def _process_alert(user: User, alert: dict):
     if not roles:
         return
 
+    # Auto-clean stale new jobs for this user before saving fresh results
+    from backend.routers.jobs import _auto_clean
+    db = SessionLocal()
+    try:
+        _auto_clean(db, user.id)
+    finally:
+        db.close()
+
     log.info("Running alert %s for user %s (%s) — roles=%s",
              alert_id, user.id, user.email, roles)
 
