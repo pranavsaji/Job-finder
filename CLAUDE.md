@@ -8,6 +8,7 @@ Full-stack job hunting platform: scrapes job postings/hiring posts across 9+ pla
 - **Frontend:** Next.js 15, React 18, TypeScript, Tailwind CSS, Framer Motion
 - **AI:** Anthropic Claude (`claude_service.py`, `prep_service.py`)
 - **Scraping:** DuckDuckGo (`ddgs`), Playwright (LinkedIn auth), httpx + BeautifulSoup
+- **Scheduler:** APScheduler `AsyncIOScheduler` — hourly alert cron, SMTP email via smtplib
 - **ATS APIs:** Greenhouse (`boards-api.greenhouse.io`), Lever (`api.lever.co`) for real posting dates
 - **Auth:** JWT (python-jose), bcrypt passwords, Fernet encryption for stored LinkedIn creds
 - **Deploy:** Railway (backend) + Vercel (frontend)
@@ -25,6 +26,7 @@ Full-stack job hunting platform: scrapes job postings/hiring posts across 9+ pla
 | `backend/models/prep_pack.py` | `PrepPackRecord` SQLAlchemy model — stores saved interview prep packs |
 | `backend/routers/prep.py` | `/prep/generate`, `/prep/chat` (SSE), `/prep/save`, `/prep/saved`, `/prep/saved/{id}` |
 | `backend/routers/signals.py` | `POST /signals/company`, `POST /signals/scan` |
+| `backend/services/alert_scheduler.py` | Hourly APScheduler job: scrape all user alerts, save new jobs, send email |
 | `backend/routers/alerts.py` | Alert CRUD + `POST /alerts/{id}/check` |
 | `backend/routers/network.py` | `POST /network/hiring-manager`, `POST /network/alumni` |
 | `backend/routers/jobs.py` | Job listing, scrape trigger (sync + background), status updates |
@@ -46,6 +48,14 @@ CREDENTIAL_ENCRYPTION_KEY=   # Fernet key for LinkedIn password storage
 # Optional
 HUNTER_IO_API_KEY=           # Email finding
 CORS_ORIGINS=https://your-frontend.vercel.app
+
+# Alert email (all required together to enable; skip to disable email)
+SMTP_HOST=smtp.gmail.com     # e.g. smtp.gmail.com
+SMTP_PORT=587                # STARTTLS port
+SMTP_USER=you@gmail.com      # sender login
+SMTP_PASS=app-password       # Gmail app password or SMTP password
+EMAIL_FROM=you@gmail.com     # display From address (defaults to SMTP_USER)
+APP_URL=https://your-frontend.vercel.app  # used in email job links
 ```
 
 ## CLI / Entry Points
@@ -75,10 +85,11 @@ curl -s -X POST http://localhost:8001/prep/generate \
 - **LinkedIn auth safety:** Session cookies cached 20h, stealth navigator patches, Fernet-encrypted creds
 - **Prep packs persistence:** `PrepPackRecord` table upserts on same user+company+role; `create_tables()` must import the model to register it with SQLAlchemy metadata
 - **Interview agent:** SSE streaming via `StreamingResponse`; newlines escaped as `\\n` in backend, unescaped in frontend; optional DDG search injected for fresh-info keywords
+- **Alert scheduler:** `AsyncIOScheduler` started at app startup (first run 30 s after boot, then every 1 h); each alert scrapes its roles, saves new jobs per user, emails if new jobs found; email skipped gracefully when SMTP vars absent
 
 ## Deploy
 - **Backend:** Railway auto-deploys on push to `main`
 - **Frontend:** Vercel auto-deploys; set `NEXT_PUBLIC_API_URL` to Railway backend URL
 
 ## Last Updated
-2026-03-19
+2026-03-20

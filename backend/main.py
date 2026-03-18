@@ -124,8 +124,16 @@ async def startup_event():
     create_tables()
     _migrate_db()
     _seed_admin()
+    from backend.services.alert_scheduler import start_scheduler
+    start_scheduler()
     print("Database tables created.")
     print("Job Info Finder API is running.")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    from backend.services.alert_scheduler import stop_scheduler
+    stop_scheduler()
 
 
 @app.get("/")
