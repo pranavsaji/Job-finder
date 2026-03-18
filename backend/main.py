@@ -79,6 +79,12 @@ def _migrate_db():
             print("Migration applied: users.is_admin")
         except Exception:
             pass  # Column already exists
+        try:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN user_id INTEGER"))
+            conn.commit()
+            print("Migration applied: jobs.user_id")
+        except Exception:
+            pass  # Column already exists
 
 
 def _seed_admin():

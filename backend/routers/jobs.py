@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -11,6 +11,9 @@ from backend.middleware.auth import get_current_user
 from backend.services.scraper import scrape_all
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+# Jobs older than this with status "new" are auto-deleted on scrape
+AUTO_CLEAN_DAYS = 7
 
 
 class ScrapeRequest(BaseModel):
@@ -28,6 +31,29 @@ class JobStatusUpdate(BaseModel):
     status: str
 
 
+def _user_jobs_query(db: Session, user_id: int):
+    """Return a query scoped to the given user (includes legacy null-user_id rows for that user)."""
+    return db.query(Job).filter(Job.user_id == user_id)
+
+
+def _auto_clean(db: Session, user_id: int):
+    """Delete stale 'new' jobs (not saved/applied/archived) older than AUTO_CLEAN_DAYS for this user."""
+    cutoff = datetime.utcnow() - timedelta(days=AUTO_CLEAN_DAYS)
+    deleted = (
+        db.query(Job)
+        .filter(
+            Job.user_id == user_id,
+            Job.status == "new",
+            Job.scraped_at < cutoff,
+        )
+        .delete(synchronize_session=False)
+    )
+    if deleted:
+        db.commit()
+        print(f"Auto-cleaned {deleted} stale jobs for user {user_id}")
+    return deleted
+
+
 @router.get("")
 async def list_jobs(
     role: Optional[str] = Query(None),
@@ -42,8 +68,8 @@ async def list_jobs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List jobs with optional filters."""
-    query = db.query(Job)
+    """List jobs for the current user with optional filters."""
+    query = _user_jobs_query(db, current_user.id)
 
     if role:
         query = query.filter(
@@ -54,7 +80,6 @@ async def list_jobs(
         query = query.filter(Job.platform == platform)
 
     if date_from:
-        # Use scraped_at as the reliable timestamp; posted_at from snippets is often wrong
         query = query.filter(Job.scraped_at >= date_from)
 
     if date_to:
@@ -94,9 +119,10 @@ async def trigger_scrape(
     current_user: User = Depends(get_current_user),
 ):
     """Trigger background job scraping."""
+    _auto_clean(db, current_user.id)
     background_tasks.add_task(
         _run_scrape_and_save,
-        db_url=db.bind.url if hasattr(db, "bind") else None,
+        user_id=current_user.id,
         roles=payload.roles,
         platforms=payload.platforms,
         date_from=payload.date_from,
@@ -114,6 +140,10 @@ async def trigger_scrape_sync(
 ):
     """Trigger synchronous job scraping and return results immediately."""
     import asyncio as _asyncio
+
+    # Auto-clean stale new jobs before adding fresh results
+    _auto_clean(db, current_user.id)
+
     try:
         jobs_data = await _asyncio.wait_for(
             scrape_all(
@@ -126,16 +156,13 @@ async def trigger_scrape_sync(
                 limit_per_platform=payload.limit_per_platform,
                 date_preset=payload.date_preset,
             ),
-            timeout=110,  # 110s hard cap — return what we have instead of crashing
+            timeout=110,
         )
     except _asyncio.TimeoutError:
-        jobs_data = []  # return empty rather than 500
+        jobs_data = []
 
     # Supplement with LinkedIn authenticated scraper if user has saved credentials
-    # and linkedin is in the requested platforms (or all platforms requested)
-    wants_linkedin = (
-        not payload.platforms or "linkedin" in (payload.platforms or [])
-    )
+    wants_linkedin = not payload.platforms or "linkedin" in (payload.platforms or [])
     prefs = current_user.scraping_preferences or {}
     li_email = prefs.get("linkedin_email")
     li_enc = prefs.get("linkedin_password_enc")
@@ -154,7 +181,6 @@ async def trigger_scrape_sync(
                 date_preset=payload.date_preset,
             )
             if li_result["status"] == "ok":
-                # Mark as linkedin_auth to distinguish from DDG-based linkedin
                 for j in li_result["jobs"]:
                     j["platform"] = "linkedin"
                     j["_source"] = "authenticated"
@@ -164,12 +190,18 @@ async def trigger_scrape_sync(
 
     saved_jobs = []
     for job_data in jobs_data:
-        existing = db.query(Job).filter(Job.post_url == job_data["post_url"]).first()
+        # Check dedup per user (same URL + same user)
+        existing = (
+            db.query(Job)
+            .filter(Job.post_url == job_data["post_url"], Job.user_id == current_user.id)
+            .first()
+        )
         if existing:
             saved_jobs.append(existing.to_dict())
             continue
 
         job = Job(
+            user_id=current_user.id,
             title=job_data.get("title"),
             company=job_data.get("company"),
             poster_name=job_data.get("poster_name"),
@@ -202,8 +234,8 @@ async def get_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get a single job by ID."""
-    job = db.query(Job).filter(Job.id == job_id).first()
+    """Get a single job by ID (must belong to current user)."""
+    job = _user_jobs_query(db, current_user.id).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return job.to_dict()
@@ -224,7 +256,7 @@ async def update_job_status(
             detail=f"Status must be one of: {', '.join(valid_statuses)}",
         )
 
-    job = db.query(Job).filter(Job.id == job_id).first()
+    job = _user_jobs_query(db, current_user.id).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -240,8 +272,8 @@ async def delete_all_jobs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete jobs from the database. Pass ?platforms=linkedin,twitter to delete only those platforms."""
-    q = db.query(Job)
+    """Delete current user's jobs. Pass ?platforms=linkedin,twitter to delete only those platforms."""
+    q = _user_jobs_query(db, current_user.id)
     if platforms:
         platform_list = [p.strip() for p in platforms.split(",") if p.strip()]
         q = q.filter(Job.platform.in_(platform_list))
@@ -257,8 +289,8 @@ async def delete_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete a job by ID."""
-    job = db.query(Job).filter(Job.id == job_id).first()
+    """Delete a job by ID (must belong to current user)."""
+    job = _user_jobs_query(db, current_user.id).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -267,14 +299,14 @@ async def delete_job(
 
 
 async def _run_scrape_and_save(
-    db_url,
+    user_id: int,
     roles: list,
     platforms: Optional[list],
     date_from: Optional[datetime],
     date_to: Optional[datetime],
     enrich_with_claude: bool,
 ):
-    """Background task to scrape and save jobs."""
+    """Background task to scrape and save jobs for a specific user."""
     from backend.models.database import SessionLocal
 
     jobs_data = await scrape_all(
@@ -288,11 +320,16 @@ async def _run_scrape_and_save(
     db = SessionLocal()
     try:
         for job_data in jobs_data:
-            existing = db.query(Job).filter(Job.post_url == job_data["post_url"]).first()
+            existing = (
+                db.query(Job)
+                .filter(Job.post_url == job_data["post_url"], Job.user_id == user_id)
+                .first()
+            )
             if existing:
                 continue
 
             job = Job(
+                user_id=user_id,
                 title=job_data.get("title"),
                 company=job_data.get("company"),
                 poster_name=job_data.get("poster_name"),

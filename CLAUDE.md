@@ -68,6 +68,8 @@ curl -s -X POST http://localhost:8001/prep/generate \
 - **Prep service:** Uses 2000 max_tokens with compact single-line JSON format to avoid truncation; `import json/re` at module level (not inside function)
 - **Signals scan:** Uses ATS site: queries (greenhouse.io, lever.co, ashbyhq.com, wellfound.com/company) for reliable company name extraction from URL slugs
 - **Resume generation prompt:** "REWRITE every bullet from scratch — do NOT copy any sentence from original"; uses facts from original as source only
+- **Job user isolation:** `jobs.user_id` column (nullable for legacy rows); all queries scoped to `current_user.id`; dedup is per-user (same URL can exist for different users)
+- **Auto-cleanup:** `_auto_clean()` deletes `status="new"` jobs older than 7 days for the current user before every scrape; saved/applied/archived jobs are never touched
 - **`initialTab` prop on DraftPanel:** "Tailor" button in JobCard opens panel directly to Resume tab; "Ask AI" opens Info tab
 - **Registration closed:** `POST /auth/register` returns 403; users added via admin panel only
 - **LinkedIn auth safety:** Session cookies cached 20h, stealth navigator patches, Fernet-encrypted creds
@@ -79,4 +81,4 @@ curl -s -X POST http://localhost:8001/prep/generate \
 - **Frontend:** Vercel auto-deploys; set `NEXT_PUBLIC_API_URL` to Railway backend URL
 
 ## Last Updated
-2026-03-18
+2026-03-19

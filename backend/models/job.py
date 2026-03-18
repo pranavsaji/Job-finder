@@ -7,6 +7,7 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=True, index=True)  # null = legacy/shared row
     title = Column(String(500), nullable=True)
     company = Column(String(500), nullable=True)
     poster_name = Column(String(500), nullable=True)
