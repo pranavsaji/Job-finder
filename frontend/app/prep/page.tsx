@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
   BookOpen,
+  Bookmark,
+  BookmarkCheck,
   Bot,
   ChevronDown,
   ChevronUp,
@@ -21,6 +23,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Trash2,
   Volume2,
 } from "lucide-react";
 import axios from "axios";
@@ -548,6 +551,15 @@ function InterviewAgent({
   );
 }
 
+interface SavedPack {
+  id: number;
+  company: string;
+  role: string;
+  job_description: string | null;
+  pack: PrepPack;
+  created_at: string | null;
+}
+
 export default function PrepPage() {
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
@@ -557,15 +569,77 @@ export default function PrepPage() {
   const [pack, setPack] = useState<PrepPack | null>(null);
   const [searchedFor, setSearchedFor] = useState({ company: "", role: "" });
   const [searchedJD, setSearchedJD] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [savedPacks, setSavedPacks] = useState<SavedPack[]>([]);
+  const [showSaved, setShowSaved] = useState(false);
+  const [loadingSaved, setLoadingSaved] = useState(false);
 
   const token = typeof window !== "undefined" ? localStorage.getItem("jif_token") : "";
   const headers = { Authorization: `Bearer ${token}` };
+
+  async function loadSavedPacks() {
+    setLoadingSaved(true);
+    try {
+      const r = await prepApi.listSaved();
+      setSavedPacks(r.data.packs || []);
+    } catch {
+      toast.error("Failed to load saved packs");
+    } finally {
+      setLoadingSaved(false);
+    }
+  }
+
+  async function savePack() {
+    if (!pack || !searchedFor.company) return;
+    setSaving(true);
+    try {
+      await prepApi.save({
+        company: searchedFor.company,
+        role: searchedFor.role,
+        job_description: searchedJD || undefined,
+        pack,
+      });
+      setSaved(true);
+      toast.success("Prep pack saved");
+      // Refresh saved list if open
+      if (showSaved) loadSavedPacks();
+    } catch {
+      toast.error("Failed to save prep pack");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteSavedPack(id: number) {
+    try {
+      await prepApi.deleteSaved(id);
+      setSavedPacks((prev) => prev.filter((p) => p.id !== id));
+      toast.success("Deleted");
+    } catch {
+      toast.error("Failed to delete");
+    }
+  }
+
+  function loadSavedPackIntoForm(sp: SavedPack) {
+    setCompany(sp.company);
+    setRole(sp.role);
+    setJobDescription(sp.job_description || "");
+    if (sp.job_description) setShowJD(true);
+    setPack(sp.pack);
+    setSearchedFor({ company: sp.company, role: sp.role });
+    setSearchedJD(sp.job_description || "");
+    setSaved(true);
+    setShowSaved(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   async function generate() {
     if (!company.trim()) return toast.error("Enter a company name");
     if (!role.trim()) return toast.error("Enter a role");
     setLoading(true);
     setPack(null);
+    setSaved(false);
     try {
       const r = await axios.post(
         `${API}/prep/generate`,
@@ -594,12 +668,80 @@ export default function PrepPage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold gradient-text">Interview Prep Pack</h1>
-        <p className="text-white/40 text-sm mt-1">
-          AI-powered prep: real interview questions, process timeline, culture notes, salary data
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-bold gradient-text">Interview Prep Pack</h1>
+          <p className="text-white/40 text-sm mt-1">
+            AI-powered prep: real interview questions, process timeline, culture notes, salary data
+          </p>
+        </div>
+        <button
+          onClick={() => {
+            setShowSaved(!showSaved);
+            if (!showSaved && savedPacks.length === 0) loadSavedPacks();
+          }}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all mt-1"
+          style={{
+            background: showSaved ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.05)",
+            border: showSaved ? "1px solid rgba(139,92,246,0.4)" : "1px solid rgba(255,255,255,0.1)",
+            color: showSaved ? "#c4b5fd" : "rgba(255,255,255,0.4)",
+          }}
+        >
+          <Bookmark size={13} />
+          Saved Packs
+        </button>
       </div>
+
+      {/* Saved packs drawer */}
+      <AnimatePresence>
+        {showSaved && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="glass-card p-4"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-white/60 text-sm font-semibold">Saved Prep Packs</span>
+              {loadingSaved && <Loader2 size={13} className="text-white/30 animate-spin" />}
+            </div>
+            {savedPacks.length === 0 && !loadingSaved ? (
+              <p className="text-white/25 text-xs text-center py-4">No saved packs yet — generate one and click Save</p>
+            ) : (
+              <div className="space-y-2">
+                {savedPacks.map((sp) => (
+                  <div
+                    key={sp.id}
+                    className="flex items-center gap-3 rounded-xl px-3 py-2.5 cursor-pointer group transition-all hover:bg-white/5"
+                    style={{ border: "1px solid rgba(255,255,255,0.07)" }}
+                    onClick={() => loadSavedPackIntoForm(sp)}
+                  >
+                    <div
+                      className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                      style={{ background: "rgba(139,92,246,0.15)", border: "1px solid rgba(139,92,246,0.25)" }}
+                    >
+                      <BookmarkCheck size={13} className="text-purple-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white/75 text-xs font-medium truncate">{sp.role} at {sp.company}</p>
+                      <p className="text-white/30 text-[10px]">
+                        {sp.created_at ? new Date(sp.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : ""}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteSavedPack(sp.id); }}
+                      className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-lg flex items-center justify-center transition-all hover:bg-red-500/20"
+                      title="Delete"
+                    >
+                      <Trash2 size={11} className="text-red-400/70" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Search form */}
       <div className="glass-card p-5 space-y-4">
@@ -670,9 +812,32 @@ export default function PrepPage() {
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
           <div className="flex items-center gap-3 mb-2">
             <CheckCircle2 size={16} className="text-green-400" />
-            <h2 className="text-white/70 text-sm font-semibold">
+            <h2 className="text-white/70 text-sm font-semibold flex-1">
               {searchedFor.role} at {searchedFor.company}
             </h2>
+            <button
+              onClick={savePack}
+              disabled={saving || saved}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all disabled:opacity-60"
+              style={saved ? {
+                background: "rgba(139,92,246,0.2)",
+                border: "1px solid rgba(139,92,246,0.4)",
+                color: "#c4b5fd",
+              } : {
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                color: "rgba(255,255,255,0.5)",
+              }}
+            >
+              {saving ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : saved ? (
+                <BookmarkCheck size={11} />
+              ) : (
+                <Bookmark size={11} />
+              )}
+              {saved ? "Saved" : "Save Pack"}
+            </button>
           </div>
 
           {/* Process overview */}

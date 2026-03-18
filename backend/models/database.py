@@ -35,4 +35,5 @@ def create_tables():
     from backend.models.person import Person
     from backend.models.user import User
     from backend.models.draft import Draft
+    from backend.models.prep_pack import PrepPackRecord  # noqa: F401
     Base.metadata.create_all(bind=engine)

@@ -4,11 +4,14 @@ import os
 from typing import Any, Dict, List, Optional
 
 import anthropic
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from backend.middleware.auth import get_current_user
+from backend.models.database import get_db
+from backend.models.prep_pack import PrepPackRecord
 from backend.models.user import User
 from backend.services.prep_service import _ddgs_search
 
@@ -162,3 +165,80 @@ async def chat(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+class SavePackRequest(BaseModel):
+    company: str
+    role: str
+    job_description: Optional[str] = None
+    pack: Dict[str, Any]
+
+
+@router.post("/save")
+def save_prep_pack(
+    payload: SavePackRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Save a prep pack for later reference."""
+    # Upsert: replace if same user+company+role already exists
+    existing = (
+        db.query(PrepPackRecord)
+        .filter(
+            PrepPackRecord.user_id == current_user.id,
+            PrepPackRecord.company == payload.company,
+            PrepPackRecord.role == payload.role,
+        )
+        .first()
+    )
+    if existing:
+        existing.pack = payload.pack
+        existing.job_description = payload.job_description
+        db.commit()
+        db.refresh(existing)
+        return existing.to_dict()
+
+    record = PrepPackRecord(
+        user_id=current_user.id,
+        company=payload.company,
+        role=payload.role,
+        job_description=payload.job_description,
+        pack=payload.pack,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record.to_dict()
+
+
+@router.get("/saved")
+def list_saved_packs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all saved prep packs for the current user."""
+    records = (
+        db.query(PrepPackRecord)
+        .filter(PrepPackRecord.user_id == current_user.id)
+        .order_by(PrepPackRecord.created_at.desc())
+        .all()
+    )
+    return {"packs": [r.to_dict() for r in records]}
+
+
+@router.delete("/saved/{pack_id}")
+def delete_saved_pack(
+    pack_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a saved prep pack."""
+    record = db.query(PrepPackRecord).filter(
+        PrepPackRecord.id == pack_id,
+        PrepPackRecord.user_id == current_user.id,
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(record)
+    db.commit()
+    return {"deleted": pack_id}

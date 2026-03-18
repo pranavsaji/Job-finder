@@ -355,4 +355,11 @@ export const prepApi = {
     }
     onDone();
   },
+
+  save: (data: { company: string; role: string; job_description?: string; pack: object }) =>
+    getApi().post("/prep/save", data),
+
+  listSaved: () => getApi().get("/prep/saved"),
+
+  deleteSaved: (id: number) => getApi().delete(`/prep/saved/${id}`),
 };

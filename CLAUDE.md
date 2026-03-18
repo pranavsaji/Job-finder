@@ -22,7 +22,8 @@ Full-stack job hunting platform: scrapes job postings/hiring posts across 9+ pla
 | `backend/services/claude_service.py` | Resume tailoring, ATS PDF generation, outreach drafting |
 | `backend/services/linkedin_auth_scraper.py` | Playwright login, stealth patches, Fernet cred encryption |
 | `backend/services/jobboards_scraper.py` | DDG discovers ATS URLs → Greenhouse/Lever APIs for real dates |
-| `backend/routers/prep.py` | `POST /prep/generate` — interview prep pack |
+| `backend/models/prep_pack.py` | `PrepPackRecord` SQLAlchemy model — stores saved interview prep packs |
+| `backend/routers/prep.py` | `/prep/generate`, `/prep/chat` (SSE), `/prep/save`, `/prep/saved`, `/prep/saved/{id}` |
 | `backend/routers/signals.py` | `POST /signals/company`, `POST /signals/scan` |
 | `backend/routers/alerts.py` | Alert CRUD + `POST /alerts/{id}/check` |
 | `backend/routers/network.py` | `POST /network/hiring-manager`, `POST /network/alumni` |
@@ -30,7 +31,7 @@ Full-stack job hunting platform: scrapes job postings/hiring posts across 9+ pla
 | `frontend/app/jobs/page.tsx` | Jobs UI: scrape modal, "Tailor" opens Resume tab in DraftPanel |
 | `frontend/components/DraftPanel.tsx` | Side panel: info, outreach drafts, resume analysis + PDF generation |
 | `frontend/app/signals/page.tsx` | Company/role signal scanner with type filters |
-| `frontend/app/prep/page.tsx` | Interview prep pack UI with collapsible sections |
+| `frontend/app/prep/page.tsx` | Prep pack UI: collapsible sections, voice interview agent, save/load saved packs |
 | `frontend/app/network/page.tsx` | Hiring manager + alumni finder |
 | `frontend/app/alerts/page.tsx` | Saved alert CRUD with "Check Now" scrape trigger |
 
@@ -70,10 +71,12 @@ curl -s -X POST http://localhost:8001/prep/generate \
 - **`initialTab` prop on DraftPanel:** "Tailor" button in JobCard opens panel directly to Resume tab; "Ask AI" opens Info tab
 - **Registration closed:** `POST /auth/register` returns 403; users added via admin panel only
 - **LinkedIn auth safety:** Session cookies cached 20h, stealth navigator patches, Fernet-encrypted creds
+- **Prep packs persistence:** `PrepPackRecord` table upserts on same user+company+role; `create_tables()` must import the model to register it with SQLAlchemy metadata
+- **Interview agent:** SSE streaming via `StreamingResponse`; newlines escaped as `\\n` in backend, unescaped in frontend; optional DDG search injected for fresh-info keywords
 
 ## Deploy
 - **Backend:** Railway auto-deploys on push to `main`
 - **Frontend:** Vercel auto-deploys; set `NEXT_PUBLIC_API_URL` to Railway backend URL
 
 ## Last Updated
-2026-03-17
+2026-03-18
