@@ -86,6 +86,12 @@ def _migrate_db():
             print("Migration applied: jobs.user_id")
         except Exception:
             pass  # Column already exists
+        try:
+            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN research_context TEXT"))
+            conn.commit()
+            print("Migration applied: mock_sessions.research_context")
+        except Exception:
+            pass  # Column already exists
 
 
 def _seed_admin():

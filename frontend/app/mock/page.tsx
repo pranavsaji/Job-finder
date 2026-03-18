@@ -139,6 +139,8 @@ export default function MockPage() {
   const recognitionRef = useRef<any>(null);
   const streamTextRef = useRef("");
   const voiceRef = useRef(true);
+  const streamingRef = useRef(false);
+  const stageRef = useRef<Stage>("setup");
 
   // Video
   const [videoOn, setVideoOn] = useState(false);
@@ -166,8 +168,10 @@ export default function MockPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Keep voice ref in sync
+  // Keep refs in sync with state for use in async callbacks
   useEffect(() => { voiceRef.current = voiceOn; }, [voiceOn]);
+  useEffect(() => { streamingRef.current = streaming; }, [streaming]);
+  useEffect(() => { stageRef.current = stage; }, [stage]);
 
   // Auto-scroll
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -235,7 +239,7 @@ export default function MockPage() {
     if (best) utt.voice = best;
     utt.rate = 1.0; utt.pitch = 1.0;
     utt.onstart = () => setIsSpeaking(true);
-    utt.onend = () => { setIsSpeaking(false); if (voiceRef.current) setTimeout(startListening, 500); };
+    utt.onend = () => { setIsSpeaking(false); if (voiceRef.current && !streamingRef.current && stageRef.current === "active") setTimeout(startListening, 500); };
     utt.onerror = () => setIsSpeaking(false);
     window.speechSynthesis.speak(utt);
   }
@@ -244,6 +248,8 @@ export default function MockPage() {
 
   function startListening() {
     if (typeof window === "undefined") return;
+    if (streamingRef.current || stageRef.current !== "active") return;
+    if (recognitionRef.current) return; // already listening
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) return;
     window.speechSynthesis?.cancel();
@@ -257,13 +263,14 @@ export default function MockPage() {
         if (e.results[i].isFinal) {
           final += e.results[i][0].transcript;
           const conf = e.results[i][0].confidence;
-          if (conf) confidenceScoresRef.current.push(conf);
+          if (typeof conf === "number") confidenceScoresRef.current.push(conf);
         } else interim += e.results[i][0].transcript;
       }
       if (final) { setInput(p => (p + " " + final).trim()); setInterimText(""); }
       else setInterimText(interim);
     };
     recog.onend = () => {
+      recognitionRef.current = null;
       setIsListening(false); setInterimText("");
       setInput(prev => { if (prev.trim() && voiceRef.current) setTimeout(() => sendMessage(prev), 120); return prev; });
     };
@@ -271,7 +278,7 @@ export default function MockPage() {
     recog.start();
   }
 
-  function stopListening() { recognitionRef.current?.stop(); setIsListening(false); }
+  function stopListening() { recognitionRef.current?.stop(); recognitionRef.current = null; setIsListening(false); }
 
   // ── Start session ──────────────────────────────────────────────────────
 
@@ -541,7 +548,7 @@ export default function MockPage() {
         <div className={`flex flex-col gap-3 ${selectedType === "coding" ? "w-[52%]" : "w-full"}`}>
           {/* Video panel */}
           {videoOn && (
-            <div className="glass-card overflow-hidden rounded-xl">
+            <div className="glass-card overflow-hidden rounded-xl relative">
               <video ref={videoRef} autoPlay muted playsInline className="w-full rounded-xl" style={{ maxHeight: "200px", objectFit: "cover", transform: "scaleX(-1)" }} />
               <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-red-400" style={{ background: "rgba(0,0,0,0.6)" }}>
                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" /> LIVE

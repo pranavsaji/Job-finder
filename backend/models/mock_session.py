@@ -15,6 +15,7 @@ class MockSession(Base):
     difficulty = Column(String(20), nullable=False, default="medium")
     job_description = Column(Text, nullable=True)
     resume_snapshot = Column(Text, nullable=True)
+    research_context = Column(Text, nullable=True)
     messages = Column(JSON, default=list)   # [{role, content, ts}]
     evaluation = Column(JSON, nullable=True)
     speech_metrics = Column(JSON, nullable=True)

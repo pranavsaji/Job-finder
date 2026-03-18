@@ -105,6 +105,7 @@ async def start_session(
         difficulty=payload.difficulty,
         job_description=payload.job_description,
         resume_snapshot=current_user.resume_text,
+        research_context=research,
         messages=initial_messages,
         status="active",
     )
@@ -135,7 +136,12 @@ async def _chat_generator(
         ).first()
         if not sess:
             yield "data: [ERROR] Session not found\n\n"
-            yield "data: [DONE]\n\n"
+            yield "data: [DONE:False]\n\n"
+            return
+
+        if sess.status != "active":
+            yield "data: [ERROR] Session is not active\n\n"
+            yield "data: [DONE:False]\n\n"
             return
 
         messages = list(sess.messages or [])
@@ -153,14 +159,16 @@ async def _chat_generator(
             role=sess.role,
             interview_type=sess.interview_type,
             difficulty=sess.difficulty,
-            research_context="",
+            research_context=sess.research_context or "",
             resume_text=sess.resume_snapshot,
             job_description=sess.job_description,
         )
 
+        # Cap at last 30 messages to keep Claude API payload manageable
+        recent_messages = messages[-30:]
         api_messages = [
             {"role": m["role"], "content": m["content"]}
-            for m in messages
+            for m in recent_messages
         ]
     finally:
         db.close()
@@ -238,6 +246,10 @@ def evaluate(
 ):
     """Run post-interview evaluation and persist results."""
     sess = _get_session(db, payload.session_id, current_user.id)
+
+    # Idempotency: return cached result if already evaluated
+    if sess.status == "completed" and sess.evaluation:
+        return sess.evaluation
 
     result = evaluate_session(
         company=sess.company,
