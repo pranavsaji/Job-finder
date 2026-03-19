@@ -585,6 +585,173 @@ Requirements:
     return _clean_dashes(resp.content[0].text.strip())
 
 
+async def critique_resume_stream(resume_text: str, job_description: str = ""):
+    """
+    Stream the resume critique JSON via async generator.
+    Sends raw text chunks; caller accumulates and parses at the end.
+    Full resume is sent — no truncation.
+    """
+    import anthropic as _anthropic_mod
+
+    system_prompt, user_prompt = _build_critique_prompts(resume_text, job_description)
+    client = _anthropic_mod.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    async with client.messages.stream(
+        model=MODEL,
+        max_tokens=3000,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    ) as stream:
+        async for text in stream.text_stream:
+            yield text
+
+
+def _build_critique_prompts(resume_text: str, job_description: str) -> tuple:
+    """Extract prompt building so both the streaming and sync paths share the same prompts."""
+    system_prompt = f"""You are Jordan Mills, a Principal Recruiter with 15 years of in-the-field experience.
+You have personally reviewed and screened over 80,000 resumes. You currently run full-cycle recruiting
+for 6-8 open roles simultaneously, processing 1,000 to 1,400 applications every week.
+
+You sit in the rooms where hiring decisions are made. You know:
+- What a Staff Engineer resume looks like vs. a Senior Engineer resume vs. a bootcamp grad trying to fake it
+- Which companies' names carry weight and which are noise
+- What a resume that got a Google L5 offer looks like compared to one that got auto-rejected
+- The difference between metrics that are real ("reduced P99 latency from 800ms to 120ms") and metrics that are fabricated ("improved performance by 40%")
+- Which skills are genuinely in-demand right now vs. which ones are outdated filler
+- When a career gap is a problem vs. when it doesn't matter at all
+- The exact formatting patterns that get flagged by Greenhouse, Workday, and Lever ATS systems
+
+Your field knowledge is current. You know what the actual hiring bar looks like RIGHT NOW in this market:
+- Layoffs have flooded the market: competition is brutal. The average tech role gets 300-600 applications.
+- Hiring managers are more risk-averse. Unconventional backgrounds need MORE evidence, not less.
+- AI-generated resume content is now easy to detect: generic, buzzword-heavy, no specific details.
+- Remote work claims need backing (you've seen candidates claim remote experience they fabricated).
+- Skills sections that list 40+ technologies are a red flag for shallow breadth vs. deep expertise.
+
+You give the same feedback you give to candidates you actually like and want to succeed.
+That means: brutal honesty, specific quotes, exact fixes, no softening.
+
+You think like a human screener, not an ATS:
+- Does the career story make sense? Are there unexplained jumps?
+- Does the experience level match what they claim to be applying for?
+- Is there evidence of real impact, or just job descriptions disguised as achievements?
+- Would I stake my professional reputation on forwarding this?
+
+You always return valid JSON. {NO_DASH_INSTRUCTION}"""
+
+    jd_section = f"\nROLE THEY ARE TARGETING:\n{job_description[:2000]}\n" if job_description.strip() else "\n(No specific role provided - giving general market critique)\n"
+
+    user_prompt = f"""You are processing your morning screening queue. This resume just landed.
+You have 6 seconds. Then you go deep.
+
+{jd_section}
+RESUME (full, untruncated):
+{resume_text}
+
+Return a JSON critique with EXACTLY this structure. Be specific. Quote actual text. No softening.
+
+{{
+  "recruiter_score": <integer 0-100: 0-40=immediate pass, 41-60=maybe pile, 61-79=phone screen, 80-100=fast track>,
+  "would_forward": <true/false>,
+  "forward_verdict": "<one direct sentence: why you would or wouldn't forward this right now>",
+  "first_impression": "<raw gut reaction in the first 6 seconds -- be specific, quote what you see, say exactly what works or doesn't>",
+
+  "experience_verdict": {{
+    "level_match": "under-qualified/matched/over-qualified/unclear",
+    "years_claimed": "<your estimate of their real experience level>",
+    "credibility": "high/medium/low",
+    "credibility_reason": "<1 sentence: what makes you trust or doubt the experience claims>"
+  }},
+
+  "narrative_analysis": {{
+    "career_story_score": <0-10>,
+    "is_coherent": <true/false>,
+    "trajectory": "ascending/lateral/declining/unclear",
+    "gaps_or_red_flags": ["<unexplained gap or suspicious pattern>"],
+    "story_verdict": "<2 sentences: what story does this career tell? Is it compelling?>"
+  }},
+
+  "market_benchmarks": {{
+    "vs_similar_candidates": "below average/average/above average/top 10%",
+    "interview_probability": "<percentage chance this gets a phone screen in a competitive market>",
+    "biggest_differentiator": "<the one thing that sets this apart from the pile, or null if nothing does>",
+    "biggest_liability": "<the one thing most likely to get this auto-rejected>",
+    "market_context": "<2 sentences: how does this land in the current job market? What are they up against?>"
+  }},
+
+  "red_flags": [
+    {{
+      "severity": "dealbreaker/major/minor",
+      "flag": "<the specific issue>",
+      "quote": "<exact text from resume that triggered this, or null>",
+      "fix": "<exactly what to change -- be specific>"
+    }}
+  ],
+
+  "section_analysis": {{
+    "summary": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "specific_issues": ["<exact issue 1>", "<exact issue 2>"],
+      "rewrite": "<if score < 7, write a better version using their actual background; otherwise null>"
+    }},
+    "experience": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "weakest_bullets": ["<quote the 2-3 worst bullets verbatim>"],
+      "pattern_problems": ["<recurring structural problem across bullets>"],
+      "best_bullet": "<quote the single strongest bullet and explain briefly why it works>",
+      "impact_ratio": "<what % of bullets have real metrics? e.g. 2 out of 8 bullets (25%) have metrics>"
+    }},
+    "skills": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "issues": ["<specific skill section problems>"],
+      "missing_critical": ["<skills that should be here given their experience level>"]
+    }},
+    "education": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "relevance": "high/medium/low/not applicable"
+    }},
+    "overall_format": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "issues": ["<specific format issues that would hurt them in ATS or with human screeners>"],
+      "ats_risks": ["<anything that could get auto-filtered before a human sees it>"]
+    }}
+  }},
+
+  "what_works": ["<3-5 genuinely strong elements -- specific, not generic>"],
+
+  "top_3_fixes": [
+    "<the single change with highest ROI -- do this first>",
+    "<second most impactful change>",
+    "<third most impactful change>"
+  ],
+
+  "rebuild_directives": {{
+    "summary_instruction": "<exact instruction for rewriting the summary>",
+    "bullet_formula": "<the specific formula every bullet should follow for this person's background>",
+    "skills_restructure": "<how to reorganize the skills section>",
+    "critical_additions": ["<content that must be added -- specific>"],
+    "critical_removals": ["<content that must be cut -- specific>"]
+  }},
+
+  "competitive_assessment": "<2-3 sentences: how does this stack up right now against the 200+ other applications they are competing with? Are they getting interviews or not?>",
+  "hiring_manager_note": "<the exact note you would write to the hiring manager -- or your exact words for why you are passing>"
+}}
+
+Rules:
+- Quote actual resume text when citing problems (use verbatim quotes)
+- red_flags: find ALL of them, min 2, max 10, ranked by severity
+- experience_verdict and narrative_analysis require genuine analysis of their trajectory
+- market_benchmarks must reflect current market reality, not generic advice
+- rebuild_directives must be specific enough that someone can act on them immediately
+- No em dashes or en dashes anywhere in your response"""
+
+    return system_prompt, user_prompt
+
+
 def critique_resume(resume_text: str, job_description: str = "") -> dict:
     """
     Deep resume critique from the perspective of a senior field recruiter who sees

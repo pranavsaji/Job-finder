@@ -5,7 +5,7 @@ from typing import Optional
 
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -315,23 +315,30 @@ async def critique_resume(
     payload: CritiqueRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """Brutal resume critique from a senior recruiter who screens 1000+ resumes/day."""
+    """Stream resume critique JSON from a senior recruiter persona via SSE."""
     if not current_user.resume_text:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No resume uploaded. Upload your resume first.",
         )
-    import asyncio, functools
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        functools.partial(
-            claude_service.critique_resume,
-            resume_text=current_user.resume_text,
-            job_description=payload.job_description or "",
-        ),
+
+    resume_text = current_user.resume_text
+    job_description = payload.job_description or ""
+
+    async def _sse():
+        async for chunk in claude_service.critique_resume_stream(
+            resume_text=resume_text,
+            job_description=job_description,
+        ):
+            safe = chunk.replace("\n", "\\n")
+            yield f"data: {safe}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        _sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-    return result
 
 
 @router.post("/build-from-critique")

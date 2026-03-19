@@ -1071,10 +1071,48 @@ function RecruiterCritiqueTab() {
     setCritiquing(true);
     setCritique(null);
     try {
-      const res = await resumeCritiqueApi.critique({ job_description: jobDesc.trim() || undefined });
-      setCritique(res.data);
-    } catch {
-      toast.error("Critique failed. Try again.");
+      const token = typeof window !== "undefined" ? localStorage.getItem("jif_token") : "";
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const response = await fetch(`${apiUrl}/resume/critique`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ job_description: jobDesc.trim() || undefined }),
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || "Critique failed");
+      }
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulated = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = line.slice(6);
+          if (payload === "[DONE]") {
+            try {
+              const unescaped = accumulated.replace(/\\n/g, "\n");
+              const m = unescaped.match(/\{[\s\S]*\}/);
+              if (m) setCritique(JSON.parse(m[0]));
+            } catch {
+              toast.error("Could not parse critique response.");
+            }
+            return;
+          }
+          accumulated += payload.replace(/\\n/g, "\n");
+        }
+      }
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Critique failed. Try again.");
     } finally {
       setCritiquing(false);
     }

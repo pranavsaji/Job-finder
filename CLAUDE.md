@@ -9,7 +9,7 @@ Full-stack job hunting platform: scrapes jobs across 9+ platforms, enriches with
 - **AI:** Anthropic Claude (sonnet-4-6 for main tasks, haiku-4-5 for fast scoring/salary)
 - **Scraping:** DuckDuckGo (`ddgs`), Playwright (LinkedIn auth), httpx + BeautifulSoup
 - **Scheduler:** APScheduler `AsyncIOScheduler` — hourly alerts + daily follow-up reminders
-- **Code Execution:** Piston API (`emkc.org/api/v2/piston`) for mock interview coding rounds
+- **Code Execution:** Wandbox API (`wandbox.org/api/compile.json`) for mock interview coding rounds (free, no auth)
 - **Auth:** JWT (python-jose), bcrypt, Fernet encryption for LinkedIn creds
 - **Deploy:** Railway (backend) + Vercel (frontend)
 
@@ -18,10 +18,10 @@ Full-stack job hunting platform: scrapes jobs across 9+ platforms, enriches with
 |---|---|
 | `backend/main.py` | FastAPI app, CORS, all router registration, `_migrate_db()`, `_seed_admin()` |
 | `backend/services/match_service.py` | Claude Haiku job↔resume match scoring (0-100) |
-| `backend/services/code_runner.py` | Piston API async code execution, 7 languages, 5s timeout |
+| `backend/services/code_runner.py` | Wandbox API async code execution, 7 languages, 5s timeout |
 | `backend/services/mock_interview_service.py` | Research agent, 9 interview types × 4 difficulties, evaluation engine |
 | `backend/services/alert_scheduler.py` | Hourly alert cron + daily 08:00 follow-up reminder emails |
-| `backend/services/claude_service.py` | Resume tailor, ATS DOCX, outreach drafts, cover letter (3 tones), LinkedIn optimizer |
+| `backend/services/claude_service.py` | Resume tailor, ATS DOCX, outreach drafts, cover letter (3 tones), LinkedIn optimizer, critique streaming |
 | `backend/models/pipeline.py` | `PipelineEntry` — CRM stages, history, contacts JSON, offer fields |
 | `backend/models/resume_version.py` | `ResumeVersion` — resume snapshots on every upload |
 | `backend/models/contact.py` | `Contact` — referral tracker (discovered/messaged/replied/referred/pass) |
@@ -32,13 +32,13 @@ Full-stack job hunting platform: scrapes jobs across 9+ platforms, enriches with
 | `backend/routers/reminders.py` | `GET /reminders/due`, `PUT /reminders/{job_id}` (set follow_up_at) |
 | `backend/routers/contacts.py` | `/contacts` CRUD + `POST /contacts/from-network` bulk import |
 | `backend/routers/mock_interview.py` | `/mock/start`, `/mock/chat` (SSE), `/mock/evaluate`, `/mock/execute`, `/mock/analytics` |
-| `backend/routers/resume.py` | Upload + tailor + ATS DOCX + `/resume/versions` + `/resume/linkedin-optimize` |
+| `backend/routers/resume.py` | Upload + tailor + ATS DOCX + `/resume/versions` + `/resume/linkedin-optimize` + `/resume/critique` (SSE) |
 | `backend/routers/drafts.py` | Outreach drafts + `POST /drafts/cover-letter` |
 | `frontend/app/pipeline/page.tsx` | Kanban CRM: 7 stages, slide-in detail panel, stage history, contacts |
 | `frontend/app/salary/page.tsx` | Salary research form + intelligence table from scraped job data |
 | `frontend/app/contacts/page.tsx` | Referral tracker: status tabs, search, inline edit |
 | `frontend/app/mock/page.tsx` | Mock interview: voice/video/code, Run▶ code execution, History+Analytics overlay |
-| `frontend/app/resume/page.tsx` | 4-tab resume: ATS Audit / Versions / LinkedIn Optimizer / Cover Letter |
+| `frontend/app/resume/page.tsx` | 5-tab resume: ATS Audit / Recruiter Critique / Versions / LinkedIn Optimizer / Cover Letter |
 | `frontend/app/page.tsx` | Dashboard: 6 stat cards, pipeline bar, top matches, follow-ups alert, quick actions |
 | `frontend/components/DraftPanel.tsx` | Side panel: info, outreach drafts, resume analysis + PDF generation |
 
@@ -70,7 +70,7 @@ cd frontend && npm run dev                       # frontend (http://localhost:30
 - **Resume versions:** every upload auto-saves to `ResumeVersion`; restore sets `user.resume_text`; `create_tables()` must import model
 - **Cover letter tones:** professional / conversational / bold — maps to Claude instruction modifier
 - **Follow-up reminders:** `jobs.follow_up_at` datetime; scheduler checks daily at 08:00; also surfaces in `/dashboard/summary` as `followups_due`
-- **Code execution:** Piston API (no auth needed); 5s run timeout; stdout/stderr capped at 2000/1000 chars; shown below Monaco editor
+- **Code execution:** Wandbox API (free, no auth); 5s run timeout; stdout/stderr capped at 2000/1000 chars; shown below Monaco editor
 - **Mock analytics:** `GET /mock/analytics` aggregates completed sessions; returns `trends`, `avg_by_type`, `pass_rate`; rendered as SVG line chart + bar chart
 - **Salary parsing:** regex extracts min/max from raw strings (handles "120k-180k", "$120,000"); formatted as "$120K" in UI
 - **Job user isolation:** all queries scoped to `current_user.id`; dedup per-user (post_url + user_id)
@@ -90,9 +90,11 @@ cd frontend && npm run dev                       # frontend (http://localhost:30
 
 ## Resume Critic (Enhanced)
 - **Recruiter persona**: Jordan Mills, 15yr field recruiter, 80k+ resumes, 1000+/week
-- **New critique fields**: `experience_verdict` (level match, credibility), `narrative_analysis` (trajectory, career story score), `market_benchmarks` (vs peers, interview probability, differentiator/liability), `rebuild_directives` (summary instruction, bullet formula, skills restructure, critical_additions/removals)
-- **Build from critique**: Now uses rebuild_directives + market context for higher-quality rebuild
-- **Frontend**: New UI sections for experience verdict, career narrative, market position, rebuild blueprint
+- **Streaming architecture**: `/resume/critique` returns SSE (`StreamingResponse`); service uses `AsyncAnthropic` + `async with client.messages.stream()`; full resume sent with NO truncation; frontend buffers chunks via `fetch` + `ReadableStream`, unescapes `\\n`, parses JSON on `[DONE]` signal — eliminates 60s Railway timeout
+- **Shared prompts**: `_build_critique_prompts()` in `claude_service.py` used by both streaming and sync paths
+- **Critique fields**: `experience_verdict` (level match, credibility), `narrative_analysis` (trajectory, career story score), `market_benchmarks` (vs peers, interview probability, differentiator/liability), `rebuild_directives` (summary instruction, bullet formula, skills restructure, critical_additions/removals)
+- **Build from critique**: Uses rebuild_directives + market context for higher-quality rebuild; returns DOCX
+- **Frontend**: SSE fetch in `handleCritique()`; UI sections for experience verdict, career narrative, market position, rebuild blueprint
 
 ## Last Updated
-2026-03-18
+2026-03-18 (resume critique streaming)
