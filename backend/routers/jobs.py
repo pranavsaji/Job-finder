@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -144,20 +144,6 @@ async def trigger_scrape_sync(
     # Auto-clean stale new jobs before adding fresh results
     _auto_clean(db, current_user.id)
 
-    # Compute effective_date_from from preset when not explicitly set.
-    # This ensures backend post-filters (per scraper) actually run.
-    effective_date_from = payload.date_from
-    if not effective_date_from and payload.date_preset and payload.date_preset not in ("all", ""):
-        _preset_deltas = {
-            "1h":  timedelta(hours=1),
-            "24h": timedelta(hours=24),
-            "7d":  timedelta(days=7),
-            "30d": timedelta(days=30),
-        }
-        delta = _preset_deltas.get(payload.date_preset)
-        if delta:
-            effective_date_from = datetime.now(timezone.utc) - delta
-
     jobs_data = []
     try:
         jobs_data = await _asyncio.wait_for(
@@ -165,7 +151,7 @@ async def trigger_scrape_sync(
                 roles=payload.roles,
                 platforms=payload.platforms,
                 country=payload.country,
-                date_from=effective_date_from,
+                date_from=payload.date_from,
                 date_to=payload.date_to,
                 enrich_with_claude=payload.enrich_with_claude,
                 limit_per_platform=payload.limit_per_platform,

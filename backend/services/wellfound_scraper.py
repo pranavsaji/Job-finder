@@ -94,12 +94,12 @@ async def scrape_wellfound_jobs(
     date_preset: Optional[str] = None,
 ) -> list:
     """Search Wellfound for startup jobs via DDG."""
-    # Don't use DDG timelimit — too unreliable. Post-filter by date_from instead.
+    timelimit = _preset_to_timelimit(date_preset)
     per_query = max(10, limit_per_platform + 5)
 
     tasks = [
         asyncio.get_event_loop().run_in_executor(
-            None, _search_wellfound_sync, role, country, None, per_query
+            None, _search_wellfound_sync, role, country, timelimit, per_query
         )
         for role in roles[:3]
     ]
