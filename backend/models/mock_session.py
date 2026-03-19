@@ -13,9 +13,11 @@ class MockSession(Base):
     role = Column(String(200), nullable=False)
     interview_type = Column(String(50), nullable=False)
     difficulty = Column(String(20), nullable=False, default="medium")
+    duration_minutes = Column(Integer, default=45)   # user-chosen interview length
     job_description = Column(Text, nullable=True)
     resume_snapshot = Column(Text, nullable=True)
     research_context = Column(Text, nullable=True)
+    current_code = Column(Text, nullable=True)       # auto-saved code (unsent)
     messages = Column(JSON, default=list)   # [{role, content, ts}]
     evaluation = Column(JSON, nullable=True)
     speech_metrics = Column(JSON, nullable=True)
@@ -31,7 +33,9 @@ class MockSession(Base):
             "role": self.role,
             "interview_type": self.interview_type,
             "difficulty": self.difficulty,
+            "duration_minutes": self.duration_minutes or 45,
             "job_description": self.job_description,
+            "current_code": self.current_code,
             "messages": self.messages or [],
             "evaluation": self.evaluation,
             "speech_metrics": self.speech_metrics,

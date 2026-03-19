@@ -133,6 +133,8 @@ def build_system_prompt(
     research_context: str,
     resume_text: Optional[str],
     job_description: Optional[str],
+    duration_minutes: int = 45,
+    elapsed_seconds: float = 0,
 ) -> str:
     config = INTERVIEW_TYPES.get(interview_type, INTERVIEW_TYPES["behavioral"])
     diff_mod = DIFFICULTY_MODIFIERS.get(difficulty, DIFFICULTY_MODIFIERS["medium"])
@@ -142,10 +144,38 @@ def build_system_prompt(
     jd_sec = f"\n\nJOB DESCRIPTION:\n{job_description[:1500]}" if job_description else ""
     research_sec = f"\n\nCOMPANY INTERVIEW RESEARCH:\n{research_context}" if research_context else ""
 
+    # Time-awareness: inject remaining-time instructions into every turn
+    remaining_secs = max(0, duration_minutes * 60 - elapsed_seconds)
+    remaining_mins = int(remaining_secs / 60)
+    remaining_secs_display = int(remaining_secs % 60)
+
+    if remaining_mins <= 1:
+        time_note = (
+            f"⚠️ TIME CRITICAL: Only {remaining_mins}m {remaining_secs_display}s left. "
+            f"You MUST wrap up NOW. Say something like: 'We're almost out of time — do you have any quick "
+            f"questions for me?' then professionally conclude with [INTERVIEW_COMPLETE]."
+        )
+    elif remaining_mins <= 3:
+        time_note = (
+            f"⏰ TIME WARNING: Only ~{remaining_mins} minutes left. "
+            f"Ask the candidate if they have any questions for you, then close the interview with [INTERVIEW_COMPLETE]."
+        )
+    elif remaining_mins <= 7:
+        time_note = (
+            f"⏱ WRAPPING UP: About {remaining_mins} minutes remaining. "
+            f"Ask 1 final important question, wait for the response, then close professionally with [INTERVIEW_COMPLETE]."
+        )
+    else:
+        time_note = (
+            f"Interview duration: {duration_minutes} minutes total. "
+            f"Approximately {remaining_mins} minutes remaining. Pace yourself accordingly."
+        )
+
     end_instruction = (
-        f"After approximately {q_count} main questions and the candidate's final response, "
-        f"close the interview professionally and append the exact token [INTERVIEW_COMPLETE] "
-        f"at the very end of your closing message. Do not use this token at any other time."
+        f"After approximately {q_count} main questions and the candidate's final response — "
+        f"OR when time runs out — close the interview professionally and append the exact token "
+        f"[INTERVIEW_COMPLETE] at the very end of your closing message. "
+        f"Do not use this token at any other time."
     )
 
     strict_rules = """
@@ -157,13 +187,16 @@ STRICT INTERVIEWER RULES — NEVER BREAK CHARACTER:
 4. Ask ONE question at a time. Let the candidate finish before probing.
 5. If an answer is vague or shallow, probe: "Can you be more specific?" or "Give me a concrete example."
 6. Stay in character. You are not an AI assistant — you are a human interviewer.
-7. Your responses should be concise. You ask questions; you do not lecture."""
+7. Your responses should be concise. You ask questions; you do not lecture.
+8. For coding/technical rounds: react to code the candidate shares. Ask about their approach,
+   time/space complexity, edge cases, and alternative solutions."""
 
     return (
         f"You are a {config['persona']} at {company} conducting a {config['label']} interview "
         f"for the {role} position.\n\n"
         f"INTERVIEW FOCUS: {config['focus']}\n\n"
-        f"DIFFICULTY: {diff_mod}\n"
+        f"DIFFICULTY: {diff_mod}\n\n"
+        f"TIME STATUS: {time_note}\n"
         f"{strict_rules}\n\n"
         f"{end_instruction}"
         f"{resume_sec}{jd_sec}{research_sec}"
@@ -180,10 +213,13 @@ def generate_opening_message(
     research_context: str,
     resume_text: Optional[str],
     job_description: Optional[str],
+    duration_minutes: int = 45,
 ) -> str:
     system = build_system_prompt(
         company, role, interview_type, difficulty,
         research_context, resume_text, job_description,
+        duration_minutes=duration_minutes,
+        elapsed_seconds=0,
     )
     client = _anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     resp = client.messages.create(

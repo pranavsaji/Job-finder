@@ -41,8 +41,13 @@ class StartRequest(BaseModel):
     role: str
     interview_type: str
     difficulty: str = "medium"
+    duration_minutes: int = 45
     job_id: Optional[int] = None
     job_description: Optional[str] = None
+
+
+class SaveCodeRequest(BaseModel):
+    code: str
 
 
 class ChatRequest(BaseModel):
@@ -101,6 +106,7 @@ async def start_session(
             research_context=research,
             resume_text=current_user.resume_text,
             job_description=payload.job_description,
+            duration_minutes=payload.duration_minutes,
         ),
     )
 
@@ -115,6 +121,7 @@ async def start_session(
             role=payload.role,
             interview_type=payload.interview_type,
             difficulty=payload.difficulty,
+            duration_minutes=payload.duration_minutes,
             job_description=payload.job_description,
             resume_snapshot=current_user.resume_text,
             research_context=research,
@@ -133,6 +140,7 @@ async def start_session(
         "session_id": session.id,
         "opening": opening,
         "research_summary": research[:300] if research else None,
+        "duration_minutes": session.duration_minutes,
     }
 
 
@@ -174,6 +182,10 @@ async def _chat_generator(
 
         messages.append({"role": "user", "content": content, "ts": ts})
 
+        elapsed_secs = (
+            (datetime.datetime.utcnow() - sess.started_at).total_seconds()
+            if sess.started_at else 0
+        )
         system = build_system_prompt(
             company=sess.company,
             role=sess.role,
@@ -182,6 +194,8 @@ async def _chat_generator(
             research_context=sess.research_context or "",
             resume_text=sess.resume_snapshot,
             job_description=sess.job_description,
+            duration_minutes=sess.duration_minutes or 45,
+            elapsed_seconds=elapsed_secs,
         )
 
         # Cap at last 30 messages to keep Claude API payload manageable
@@ -357,6 +371,22 @@ def delete_session(
     db.delete(sess)
     db.commit()
     return {"deleted": session_id}
+
+
+# ── Code Auto-Save ──────────────────────────────────────────────────────────
+
+@router.put("/sessions/{session_id}/code")
+def save_code(
+    session_id: int,
+    payload: SaveCodeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Persist the candidate's current code (auto-save, not a chat message)."""
+    sess = _get_session(db, session_id, current_user.id)
+    sess.current_code = payload.code
+    db.commit()
+    return {"ok": True}
 
 
 # ── Code Execution ──────────────────────────────────────────────────────────

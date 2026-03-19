@@ -135,6 +135,7 @@ export default function MockPage() {
   const [interviewComplete, setInterviewComplete] = useState(false);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [researchNote, setResearchNote] = useState("");
+  const [duration, setDuration] = useState(45); // minutes, user-chosen
 
   // Voice
   const [isListening, setIsListening] = useState(false);
@@ -196,6 +197,10 @@ export default function MockPage() {
   // Auto-send code to interviewer after run
   const [pendingCodeSend, setPendingCodeSend] = useState<string | null>(null);
 
+  // Time management
+  const wrapUpSentRef = useRef(false);
+  const autoSaveCodeRef = useRef<any>(null);
+
   // Keep refs in sync with state for use in async callbacks
   useEffect(() => { voiceRef.current = voiceOn; }, [voiceOn]);
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
@@ -209,10 +214,11 @@ export default function MockPage() {
     jobsApi.list({ per_page: 50 }).then(r => setUserJobs(r.data.jobs || [])).catch(() => {});
   }, []);
 
-  // Timer
+  // Timer (counts up; remaining = duration*60 - elapsed)
   useEffect(() => {
     if (stage === "active") {
       startTimeRef.current = Date.now();
+      wrapUpSentRef.current = false;
       timerRef.current = setInterval(() => setElapsed(s => s + 1), 1000);
     } else {
       clearInterval(timerRef.current);
@@ -220,9 +226,39 @@ export default function MockPage() {
     return () => clearInterval(timerRef.current);
   }, [stage]);
 
+  // Auto-evaluate when time runs out; prep wrap-up
+  useEffect(() => {
+    if (stage !== "active") return;
+    const remaining = duration * 60 - elapsed;
+    if (remaining <= 0) {
+      finishAndEvaluate();
+    }
+  }, [elapsed, stage]);
+
+  // Code auto-save to backend every 30s
+  useEffect(() => {
+    if (!sessionId || stage !== "active") return;
+    autoSaveCodeRef.current = setInterval(() => {
+      const isCodeRound = selectedType === "coding" || selectedType === "technical_screen";
+      if (isCodeRound && code.trim()) {
+        mockApi.saveCode(sessionId, code).catch(() => {});
+        // Also persist to localStorage in case session reloads
+        localStorage.setItem(`mock_code_${sessionId}`, code);
+      }
+    }, 30000);
+    return () => clearInterval(autoSaveCodeRef.current);
+  }, [sessionId, stage, code, selectedType]);
+
+  // Save code to localStorage on every change (instant backup)
+  useEffect(() => {
+    if (sessionId && stage === "active" && (selectedType === "coding" || selectedType === "technical_screen")) {
+      localStorage.setItem(`mock_code_${sessionId}`, code);
+    }
+  }, [code]);
+
   // Anti-cheat listeners (coding round only)
   useEffect(() => {
-    if (stage !== "active" || selectedType !== "coding") return;
+    if (stage !== "active" || (selectedType !== "coding" && selectedType !== "technical_screen")) return;
     const onBlur = () => { tabSwitchRef.current++; if (tabSwitchRef.current > 1) setCheatWarning(true); };
     const onPaste = (e: ClipboardEvent) => {
       const text = e.clipboardData?.getData("text") || "";
@@ -370,12 +406,17 @@ export default function MockPage() {
         role: role.trim(),
         interview_type: selectedType,
         difficulty,
+        duration_minutes: duration,
         job_id: selectedJobId || undefined,
         job_description: jobDesc.trim() || undefined,
       });
-      setSessionId(r.data.session_id);
+      const sid = r.data.session_id;
+      setSessionId(sid);
       setResearchNote(r.data.research_summary || "");
       setMessages([{ role: "assistant", content: r.data.opening }]);
+      // Restore any auto-saved code for this session
+      const saved = localStorage.getItem(`mock_code_${sid}`);
+      if (saved) setCode(saved);
       setStage("active");
       setTimeout(() => { speakText(r.data.opening); }, 300);
     } catch (e: any) {
@@ -399,7 +440,7 @@ export default function MockPage() {
 
     try {
       await mockApi.chatStream(
-        { session_id: sessionId, message: trimmed, code: selectedType === "coding" ? code : undefined },
+        { session_id: sessionId, message: trimmed, code: (selectedType === "coding" || selectedType === "technical_screen") ? code : undefined },
         (chunk) => {
           streamTextRef.current += chunk;
           setMessages(p => {
@@ -452,6 +493,7 @@ export default function MockPage() {
     fillerCountRef.current = 0; confidenceScoresRef.current = []; wordCountRef.current = 0;
     tabSwitchRef.current = 0; pasteCountRef.current = 0;
     deleteRecording(); stopRecording(); setPendingCodeSend(null);
+    if (sessionId) localStorage.removeItem(`mock_code_${sessionId}`);
   }
 
   function formatTime(s: number) {
@@ -751,6 +793,22 @@ export default function MockPage() {
         </div>
       </div>
 
+      {/* Duration */}
+      <div className="glass-card p-5">
+        <p className="text-white/50 text-xs mb-3 font-medium">DURATION</p>
+        <div className="flex gap-2 flex-wrap">
+          {[15, 30, 45, 60, 90].map(d => (
+            <button key={d} onClick={() => setDuration(d)}
+              className="px-4 py-2 rounded-xl text-sm font-medium transition-all"
+              style={duration === d
+                ? { background: "rgba(139,92,246,0.25)", border: "1px solid rgba(139,92,246,0.5)", color: "#c4b5fd" }
+                : { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.45)" }}>
+              {d} min{d === 45 ? " · standard" : ""}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Interview type */}
       <div className="glass-card p-5">
         <p className="text-white/50 text-xs mb-3 font-medium">INTERVIEW TYPE</p>
@@ -825,10 +883,16 @@ export default function MockPage() {
         <span className="px-2 py-0.5 rounded-full text-[10px] font-medium" style={{ background: `${selectedTypeConfig.color}18`, color: selectedTypeConfig.color, border: `1px solid ${selectedTypeConfig.color}30` }}>{selectedTypeConfig.label}</span>
         <span className="px-2 py-0.5 rounded-full text-[10px] font-medium" style={{ background: `${selectedDiffConfig.color}18`, color: selectedDiffConfig.color, border: `1px solid ${selectedDiffConfig.color}30` }}>{selectedDiffConfig.label}</span>
         <div className="flex-1" />
-        {/* Timer */}
-        <div className="flex items-center gap-1.5 text-white/40 text-xs">
-          <Timer size={12} /> {formatTime(elapsed)}
-        </div>
+        {/* Countdown timer */}
+        {(() => {
+          const remaining = Math.max(0, duration * 60 - elapsed);
+          const color = remaining <= 120 ? "#f87171" : remaining <= 300 ? "#f59e0b" : "rgba(255,255,255,0.4)";
+          return (
+            <div className="flex items-center gap-1.5 text-xs font-mono" style={{ color }}>
+              <Timer size={12} /> {formatTime(remaining)}
+            </div>
+          );
+        })()}
         {/* Cheat indicator (coding only) */}
         {selectedType === "coding" && (
           <div className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${cheatWarning ? "text-red-400" : "text-white/30"}`}
@@ -863,9 +927,9 @@ export default function MockPage() {
         )}
       </div>
 
-      <div className={`flex gap-3 ${selectedType === "coding" ? "items-start" : ""}`}>
+      <div className={`flex gap-3 ${selectedType === "coding" || selectedType === "technical_screen" ? "items-start" : ""}`}>
         {/* Left: video + chat */}
-        <div className={`flex flex-col gap-3 ${selectedType === "coding" ? "w-[52%]" : "w-full"}`}>
+        <div className={`flex flex-col gap-3 ${selectedType === "coding" || selectedType === "technical_screen" ? "w-[52%]" : "w-full"}`}>
           {/* Video panel */}
           {videoOn && (
             <div className="glass-card overflow-hidden rounded-xl relative">
@@ -941,8 +1005,8 @@ export default function MockPage() {
           </div>
         </div>
 
-        {/* Right: code editor (coding round only) */}
-        {selectedType === "coding" && (
+        {/* Right: code editor (coding + technical_screen) */}
+        {(selectedType === "coding" || selectedType === "technical_screen") && (
           <div className="w-[48%] flex flex-col gap-3">
             <div className="glass-card overflow-hidden flex flex-col" style={{ height: codeOutput ? "380px" : "560px" }}>
               <div className="flex items-center justify-between px-4 py-2.5" style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>

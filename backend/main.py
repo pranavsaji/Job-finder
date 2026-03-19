@@ -110,6 +110,8 @@ def _migrate_db():
         ("users",         "resume_filename",       "VARCHAR(500)"),
         ("users",         "hunter_api_key",        "VARCHAR(500)"),
         ("users",         "target_roles",          "TEXT DEFAULT '[]'"),
+        ("mock_sessions", "duration_minutes",      "INTEGER DEFAULT 45"),
+        ("mock_sessions", "current_code",          "TEXT"),
     ]
 
     with engine.connect() as conn:

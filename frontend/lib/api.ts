@@ -373,9 +373,13 @@ export const mockApi = {
     role: string;
     interview_type: string;
     difficulty: string;
+    duration_minutes?: number;
     job_id?: number;
     job_description?: string;
   }) => getApi().post("/mock/start", data, { timeout: 60000 }),
+
+  saveCode: (sessionId: number, code: string) =>
+    getApi().put(`/mock/sessions/${sessionId}/code`, { code }),
 
   chatStream: async (
     data: { session_id: number; message: string; code?: string },
