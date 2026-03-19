@@ -21,6 +21,8 @@ class AlertCreate(BaseModel):
     date_preset: str = "24h"
     label: Optional[str] = None
     webhook_url: Optional[str] = None
+    email_interval_hours: int = 24   # how often to email: 1, 2, 4, 6, 12, 24
+    country: Optional[str] = None    # e.g. "United States", "India", "Remote"
 
 
 @router.get("")
@@ -49,6 +51,9 @@ async def create_alert(
         "last_checked": None,
         "last_count": 0,
         "webhook_url": payload.webhook_url,
+        "email_interval_hours": max(1, payload.email_interval_hours),
+        "country": payload.country or None,
+        "last_emailed_at": None,
     }
     alerts.append(new_alert)
     prefs["alerts"] = alerts

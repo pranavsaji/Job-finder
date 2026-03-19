@@ -52,8 +52,8 @@ def start_scheduler():
         sched.add_job(
             run_all_alerts,
             trigger="interval",
-            hours=1,
-            id="hourly_alerts",
+            minutes=30,           # tick every 30 min; per-alert interval checked inside
+            id="alert_tick",
             replace_existing=True,
             next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=30),
         )
@@ -66,7 +66,7 @@ def start_scheduler():
             replace_existing=True,
         )
         sched.start()
-        log.info("Alert scheduler started (runs every 1 h, first run in 30 s)")
+        log.info("Alert scheduler started (ticks every 30 min, per-alert intervals enforced)")
 
 
 def stop_scheduler():
@@ -99,14 +99,37 @@ async def run_all_alerts():
 
 
 async def _process_alert(user: User, alert: dict):
-    """Run one alert for one user."""
+    """Run one alert for one user, respecting its email_interval_hours."""
     alert_id = alert.get("id", "?")
     roles = alert.get("roles", [])
     platforms = alert.get("platforms") or None
     date_preset = alert.get("date_preset", "24h")
+    email_interval_hours = int(alert.get("email_interval_hours", 24))
+    country = alert.get("country") or None
 
     if not roles:
         return
+
+    # Check whether the email interval has elapsed since last email
+    now = datetime.datetime.utcnow()
+    last_emailed_raw = alert.get("last_emailed_at")
+    if last_emailed_raw:
+        try:
+            last_emailed = datetime.datetime.fromisoformat(last_emailed_raw)
+            elapsed_hours = (now - last_emailed).total_seconds() / 3600
+            if elapsed_hours < email_interval_hours:
+                log.info(
+                    "Alert %s: %.1fh since last email, interval=%dh — skipping",
+                    alert_id, elapsed_hours, email_interval_hours,
+                )
+                return
+        except Exception:
+            pass  # If parsing fails, proceed
+
+    # Append country to each role so the scraper includes it in the query
+    search_roles = roles
+    if country:
+        search_roles = [f"{r} {country}" for r in roles]
 
     # Auto-clean stale new jobs for this user before saving fresh results
     from backend.routers.jobs import _auto_clean
@@ -116,13 +139,15 @@ async def _process_alert(user: User, alert: dict):
     finally:
         db.close()
 
-    log.info("Running alert %s for user %s (%s) — roles=%s",
-             alert_id, user.id, user.email, roles)
+    log.info(
+        "Running alert %s for user %s (%s) — roles=%s country=%s interval=%dh",
+        alert_id, user.id, user.email, roles, country, email_interval_hours,
+    )
 
     try:
         jobs_data = await asyncio.wait_for(
             scrape_all(
-                roles=roles,
+                roles=search_roles,
                 platforms=platforms,
                 date_preset=date_preset,
                 limit_per_platform=15,
@@ -133,25 +158,35 @@ async def _process_alert(user: User, alert: dict):
         log.warning("Alert %s timed out", alert_id)
         return
 
-    new_jobs = _save_new_jobs(user.id, jobs_data)
+    _save_new_jobs(user.id, jobs_data)
     _update_last_checked(user, alert_id, len(jobs_data))
 
-    if new_jobs:
-        log.info("Alert %s: %d new jobs found — emailing %s",
-                 alert_id, len(new_jobs), user.email)
+    # Serialize posted_at datetimes for email
+    serialized = []
+    for j in jobs_data:
+        d = dict(j)
+        if isinstance(d.get("posted_at"), datetime.datetime):
+            d["posted_at"] = d["posted_at"].isoformat()
+        serialized.append(d)
+
+    if serialized:
+        log.info("Alert %s: %d jobs found — emailing %s (interval %dh)",
+                 alert_id, len(serialized), user.email, email_interval_hours)
         _send_alert_email(
             to_email=user.email,
             to_name=user.name,
             alert_label=alert.get("label", ", ".join(roles[:2])),
             roles=roles,
-            new_jobs=new_jobs,
+            jobs=serialized,
+            country=country,
+            email_interval_hours=email_interval_hours,
         )
-        # Send webhook if configured for this alert
+        _update_last_emailed(user, alert_id)
         webhook_url = alert.get("webhook_url")
         if webhook_url:
-            asyncio.create_task(_send_webhook(alert, new_jobs))
+            asyncio.create_task(_send_webhook(alert, serialized))
     else:
-        log.info("Alert %s: no new jobs", alert_id)
+        log.info("Alert %s: no jobs found this tick", alert_id)
 
 
 def _save_new_jobs(user_id: int, jobs_data: list) -> list:
@@ -225,6 +260,27 @@ def _update_last_checked(user: User, alert_id: str, count: int):
         db.commit()
     except Exception as e:
         log.error("Failed to update last_checked: %s", e)
+    finally:
+        db.close()
+
+
+def _update_last_emailed(user: User, alert_id: str):
+    """Persist last_emailed_at timestamp into user.scraping_preferences."""
+    db = SessionLocal()
+    try:
+        db_user = db.query(User).filter(User.id == user.id).first()
+        if not db_user:
+            return
+        prefs = dict(db_user.scraping_preferences or {})
+        alerts = prefs.get("alerts", [])
+        for a in alerts:
+            if a.get("id") == alert_id:
+                a["last_emailed_at"] = datetime.datetime.utcnow().isoformat()
+        prefs["alerts"] = alerts
+        db_user.scraping_preferences = prefs
+        db.commit()
+    except Exception as e:
+        log.error("Failed to update last_emailed_at: %s", e)
     finally:
         db.close()
 
@@ -359,66 +415,105 @@ def _send_alert_email(
     to_name: str,
     alert_label: str,
     roles: List[str],
-    new_jobs: List[dict],
+    jobs: List[dict],
+    country: Optional[str] = None,
+    email_interval_hours: int = 24,
 ):
     if not _smtp_configured():
         log.info("SMTP not configured — skipping email to %s", to_email)
         return
 
     app_url = os.getenv("APP_URL", "http://localhost:3000")
-    subject = f"[Job Alert] {len(new_jobs)} new job{'s' if len(new_jobs) != 1 else ''} — {alert_label}"
+    interval_label = (
+        f"every {email_interval_hours}h" if email_interval_hours != 24
+        else "daily"
+    )
+    subject = (
+        f"[Job Alert] {len(jobs)} job{'s' if len(jobs) != 1 else ''} — "
+        f"{alert_label} ({interval_label})"
+    )
 
     # Build job rows for email
     job_rows_html = ""
     job_rows_txt = ""
-    for j in new_jobs[:20]:
+    for j in jobs[:30]:
         title = j.get("title") or "Untitled"
         company = j.get("company") or ""
         platform = j.get("platform", "")
         url = j.get("post_url", "#")
         location = j.get("location") or ""
         remote = " · Remote" if j.get("is_remote") else ""
+        salary = j.get("salary_range") or ""
+        salary_tag = f" · {salary}" if salary else ""
+
+        meta_parts = [p for p in [company, location + remote, salary_tag.lstrip(" ·"), platform] if p]
+        meta_str = " · ".join(meta_parts)
 
         job_rows_html += (
             f'<tr>'
-            f'<td style="padding:8px 0;border-bottom:1px solid #2a2a3a">'
-            f'<a href="{url}" style="color:#a78bfa;font-weight:600;text-decoration:none">{title}</a><br>'
-            f'<span style="color:#888;font-size:13px">{company}{" · " + location if location else ""}{remote} · {platform}</span>'
+            f'<td style="padding:10px 0;border-bottom:1px solid #1e1e2e">'
+            f'<a href="{url}" style="color:#a78bfa;font-weight:600;font-size:14px;text-decoration:none">{title}</a><br>'
+            f'<span style="color:#666;font-size:12px;margin-top:2px;display:block">{meta_str}</span>'
+            f'</td>'
+            f'<td style="padding:10px 0 10px 12px;border-bottom:1px solid #1e1e2e;vertical-align:top;white-space:nowrap">'
+            f'<a href="{url}" style="color:#7c3aed;font-size:12px;text-decoration:none">View ↗</a>'
             f'</td>'
             f'</tr>'
         )
-        job_rows_txt += f"  • {title}{' at ' + company if company else ''} [{platform}]\n    {url}\n"
+        job_rows_txt += (
+            f"  • {title}{' at ' + company if company else ''}"
+            f"{' (' + location + ')' if location else ''}"
+            f"{' [Remote]' if j.get('is_remote') else ''}"
+            f" [{platform}]\n"
+            f"    {url}\n"
+        )
+
+    country_line = f" · <strong>{country}</strong>" if country else ""
+    interval_badge = (
+        f'<span style="background:#1e1b4b;color:#a78bfa;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600">'
+        f'Every {email_interval_hours}h</span>'
+    )
 
     html_body = f"""<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#0d0d1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-<div style="max-width:600px;margin:40px auto;background:#13131f;border:1px solid #2a2a3a;border-radius:16px;overflow:hidden">
-  <div style="background:linear-gradient(135deg,#1e1b4b,#13131f);padding:32px 32px 24px">
-    <p style="margin:0 0 4px;color:#a78bfa;font-size:13px;font-weight:600;letter-spacing:.5px">JOB ALERT</p>
-    <h1 style="margin:0;color:#fff;font-size:24px;font-weight:700">{len(new_jobs)} new job{'s' if len(new_jobs) != 1 else ''} found</h1>
-    <p style="margin:8px 0 0;color:#888;font-size:14px">Alert: <strong style="color:#c4b5fd">{alert_label}</strong></p>
+<div style="max-width:620px;margin:40px auto;background:#13131f;border:1px solid #2a2a3a;border-radius:16px;overflow:hidden">
+  <div style="background:linear-gradient(135deg,#1e1b4b,#13131f);padding:32px 32px 20px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <p style="margin:0;color:#a78bfa;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase">Job Alert</p>
+      {interval_badge}
+    </div>
+    <h1 style="margin:0 0 6px;color:#fff;font-size:26px;font-weight:800">{len(jobs)} job{'s' if len(jobs) != 1 else ''} found</h1>
+    <p style="margin:0;color:#888;font-size:14px">
+      <strong style="color:#c4b5fd">{alert_label}</strong>{country_line}
+      &nbsp;·&nbsp;{datetime.datetime.utcnow().strftime("%b %d, %Y %H:%M UTC")}
+    </p>
   </div>
-  <div style="padding:24px 32px">
+  <div style="padding:20px 32px">
     <table style="width:100%;border-collapse:collapse">
       {job_rows_html}
     </table>
-    {"<p style='color:#666;font-size:13px;margin:16px 0 0'>+ " + str(len(new_jobs) - 20) + " more jobs…</p>" if len(new_jobs) > 20 else ""}
+    {"<p style='color:#555;font-size:12px;margin:12px 0 0'>+ " + str(len(jobs) - 30) + " more jobs in the app…</p>" if len(jobs) > 30 else ""}
   </div>
   <div style="padding:20px 32px;border-top:1px solid #2a2a3a;text-align:center">
-    <a href="{app_url}/jobs" style="display:inline-block;background:#7c3aed;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:600;font-size:14px">View All Jobs →</a>
+    <a href="{app_url}/jobs" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;text-decoration:none;padding:13px 32px;border-radius:10px;font-weight:700;font-size:14px">View All Jobs in App →</a>
   </div>
-  <div style="padding:16px 32px;text-align:center">
-    <p style="color:#444;font-size:12px;margin:0">Job Info Finder · You're receiving this because you set up a job alert.</p>
+  <div style="padding:14px 32px;text-align:center;border-top:1px solid #1a1a2e">
+    <p style="color:#333;font-size:11px;margin:0">
+      Job Info Finder · Alert: {alert_label} · Sending {interval_label}
+    </p>
   </div>
 </div>
 </body>
 </html>"""
 
     text_body = (
-        f"Job Alert: {alert_label}\n"
-        f"{len(new_jobs)} new job{'s' if len(new_jobs) != 1 else ''} found:\n\n"
+        f"Job Alert: {alert_label}"
+        f"{' | ' + country if country else ''} | {interval_label.title()}\n"
+        f"{datetime.datetime.utcnow().strftime('%b %d, %Y %H:%M UTC')}\n\n"
+        f"{len(jobs)} job{'s' if len(jobs) != 1 else ''} found:\n\n"
         f"{job_rows_txt}\n"
-        f"View all jobs: {app_url}/jobs\n"
+        f"View all: {app_url}/jobs\n"
     )
 
     msg = MIMEMultipart("alternative")
