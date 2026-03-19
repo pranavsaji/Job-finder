@@ -246,47 +246,40 @@ def _save_new_jobs(user_id: int, jobs_data: list) -> list:
     return newly_inserted
 
 
-def _update_last_checked(user: User, alert_id: str, count: int):
-    """Persist last_checked timestamp + last_count back into user.scraping_preferences."""
+def _update_prefs(user_id: int, alert_id: str, updates: dict):
+    """Apply key=value updates to a specific alert in user.scraping_preferences."""
     db = SessionLocal()
     try:
-        db_user = db.query(User).filter(User.id == user.id).first()
+        db_user = db.query(User).filter(User.id == user_id).first()
         if not db_user:
             return
-        prefs = dict(db_user.scraping_preferences or {})
-        alerts = prefs.get("alerts", [])
-        for a in alerts:
+        import copy
+        prefs = copy.deepcopy(db_user.scraping_preferences or {})
+        for a in prefs.get("alerts", []):
             if a.get("id") == alert_id:
-                a["last_checked"] = datetime.datetime.utcnow().isoformat()
-                a["last_count"] = count
-        prefs["alerts"] = alerts
+                a.update(updates)
         db_user.scraping_preferences = prefs
+        # Force SQLAlchemy to detect JSON column mutation
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(db_user, "scraping_preferences")
         db.commit()
     except Exception as e:
-        log.error("Failed to update last_checked: %s", e)
+        log.error("Failed to update alert prefs: %s", e)
     finally:
         db.close()
+
+
+def _update_last_checked(user: User, alert_id: str, count: int):
+    _update_prefs(user.id, alert_id, {
+        "last_checked": datetime.datetime.utcnow().isoformat(),
+        "last_count": count,
+    })
 
 
 def _update_last_emailed(user: User, alert_id: str):
-    """Persist last_emailed_at timestamp into user.scraping_preferences."""
-    db = SessionLocal()
-    try:
-        db_user = db.query(User).filter(User.id == user.id).first()
-        if not db_user:
-            return
-        prefs = dict(db_user.scraping_preferences or {})
-        alerts = prefs.get("alerts", [])
-        for a in alerts:
-            if a.get("id") == alert_id:
-                a["last_emailed_at"] = datetime.datetime.utcnow().isoformat()
-        prefs["alerts"] = alerts
-        db_user.scraping_preferences = prefs
-        db.commit()
-    except Exception as e:
-        log.error("Failed to update last_emailed_at: %s", e)
-    finally:
-        db.close()
+    _update_prefs(user.id, alert_id, {
+        "last_emailed_at": datetime.datetime.utcnow().isoformat(),
+    })
 
 
 # ── Follow-up reminder checker (runs daily at 08:00) ──────────────────────
@@ -540,6 +533,6 @@ def _send_alert_email(
             server.starttls(context=context)
             server.login(smtp_user, smtp_pass)
             server.sendmail(smtp_user, [to_email], msg.as_string())
-        log.info("Alert email sent to %s (%d jobs)", to_email, len(new_jobs))
+        log.info("Alert email sent to %s (%d jobs)", to_email, len(jobs))
     except Exception as e:
         log.error("Failed to send alert email to %s: %s", to_email, e)

@@ -120,18 +120,22 @@ async def check_alert(
             d["posted_at"] = d["posted_at"].isoformat()
         serialized.append(d)
 
-    # Update last_checked + last_emailed_at
+    # Save new jobs to DB (same as scheduler)
+    from backend.services.alert_scheduler import _save_new_jobs
+    _save_new_jobs(current_user.id, jobs)
+
+    # Update last_checked (always); last_emailed_at only when email is actually sent
     now_iso = datetime.datetime.utcnow().isoformat()
     for a in alerts:
         if a.get("id") == alert_id:
             a["last_checked"] = now_iso
             a["last_count"] = len(serialized)
-            a["last_emailed_at"] = now_iso
+            # Do NOT touch last_emailed_at here — only update after email sent below
     prefs["alerts"] = alerts
     current_user.scraping_preferences = prefs
     db.commit()
 
-    # Always send email on manual check
+    # Always send email on manual check (if jobs found and SMTP configured)
     if serialized:
         from backend.services.alert_scheduler import _send_alert_email
         _send_alert_email(
@@ -143,5 +147,10 @@ async def check_alert(
             countries=countries,
             email_interval_hours=alert.get("email_interval_hours", 24),
         )
+        # Only update last_emailed_at after a successful send attempt
+        from backend.services.alert_scheduler import _update_prefs
+        _update_prefs(current_user.id, alert_id, {
+            "last_emailed_at": datetime.datetime.utcnow().isoformat(),
+        })
 
     return {"alert_id": alert_id, "count": len(serialized), "jobs": serialized[:30]}
