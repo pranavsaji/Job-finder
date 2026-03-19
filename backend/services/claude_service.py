@@ -585,6 +585,369 @@ Requirements:
     return _clean_dashes(resp.content[0].text.strip())
 
 
+def critique_resume(resume_text: str, job_description: str = "") -> dict:
+    """
+    Deep resume critique from the perspective of a senior field recruiter who sees
+    1000+ resumes daily. Returns structured JSON critique with market benchmarks,
+    narrative analysis, experience verdict, and detailed rebuild directives.
+    """
+    import json as _json
+
+    client = _get_client()
+
+    system_prompt = f"""You are Jordan Mills, a Principal Recruiter with 15 years of in-the-field experience.
+You have personally reviewed and screened over 80,000 resumes. You currently run full-cycle recruiting
+for 6-8 open roles simultaneously, processing 1,000 to 1,400 applications every week.
+
+You sit in the rooms where hiring decisions are made. You know:
+- What a Staff Engineer resume looks like vs. a Senior Engineer resume vs. a bootcamp grad trying to fake it
+- Which companies' names carry weight and which are noise
+- What a resume that got a Google L5 offer looks like compared to one that got auto-rejected
+- The difference between metrics that are real ("reduced P99 latency from 800ms to 120ms") and metrics that are fabricated ("improved performance by 40%")
+- Which skills are genuinely in-demand right now vs. which ones are outdated filler
+- When a career gap is a problem vs. when it doesn't matter at all
+- The exact formatting patterns that get flagged by Greenhouse, Workday, and Lever ATS systems
+
+Your field knowledge is current. You know what the actual hiring bar looks like RIGHT NOW in this market:
+- Layoffs have flooded the market: competition is brutal. The average tech role gets 300-600 applications.
+- Hiring managers are more risk-averse. Unconventional backgrounds need MORE evidence, not less.
+- AI-generated resume content is now easy to detect: generic, buzzword-heavy, no specific details.
+- Remote work claims need backing (you've seen candidates claim remote experience they fabricated).
+- Skills sections that list 40+ technologies are a red flag for shallow breadth vs. deep expertise.
+
+You give the same feedback you give to candidates you actually like and want to succeed.
+That means: brutal honesty, specific quotes, exact fixes, no softening.
+
+You think like a human screener, not an ATS:
+- Does the career story make sense? Are there unexplained jumps?
+- Does the experience level match what they claim to be applying for?
+- Is there evidence of real impact, or just job descriptions disguised as achievements?
+- Would I stake my professional reputation on forwarding this?
+
+You always return valid JSON. {NO_DASH_INSTRUCTION}"""
+
+    jd_section = f"\nROLE THEY ARE TARGETING:\n{job_description[:2000]}\n" if job_description.strip() else "\n(No specific role provided - giving general market critique)\n"
+
+    user_prompt = f"""You are processing your morning screening queue. This resume just landed.
+You have 6 seconds. Then you go deep.
+
+{jd_section}
+RESUME:
+{resume_text[:6000] if resume_text else 'No resume provided'}
+
+Return a JSON critique with EXACTLY this structure. Be specific. Quote actual text. No softening.
+
+{{
+  "recruiter_score": <integer 0-100: 0-40=immediate pass, 41-60=maybe pile, 61-79=phone screen, 80-100=fast track>,
+  "would_forward": <true/false>,
+  "forward_verdict": "<one direct sentence: why you would or wouldn't forward this right now>",
+  "first_impression": "<raw gut reaction in the first 6 seconds — be specific, quote what you see, say exactly what works or doesn't>",
+
+  "experience_verdict": {{
+    "level_match": "under-qualified/matched/over-qualified/unclear",
+    "years_claimed": "<your estimate of their real experience level>",
+    "credibility": "high/medium/low",
+    "credibility_reason": "<1 sentence: what makes you trust or doubt the experience claims>"
+  }},
+
+  "narrative_analysis": {{
+    "career_story_score": <0-10>,
+    "is_coherent": <true/false>,
+    "trajectory": "ascending/lateral/declining/unclear",
+    "gaps_or_red_flags": ["<unexplained gap or suspicious pattern>"],
+    "story_verdict": "<2 sentences: what story does this career tell? Is it compelling?>"
+  }},
+
+  "market_benchmarks": {{
+    "vs_similar_candidates": "below average/average/above average/top 10%",
+    "interview_probability": "<percentage chance this gets a phone screen in a competitive market>",
+    "biggest_differentiator": "<the one thing that sets this apart from the pile, or null if nothing does>",
+    "biggest_liability": "<the one thing most likely to get this auto-rejected>",
+    "market_context": "<2 sentences: how does this land in the current job market? What are they up against?>"
+  }},
+
+  "red_flags": [
+    {{
+      "severity": "dealbreaker/major/minor",
+      "flag": "<the specific issue>",
+      "quote": "<exact text from resume that triggered this, or null>",
+      "fix": "<exactly what to change — be specific>"
+    }}
+  ],
+
+  "section_analysis": {{
+    "summary": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "specific_issues": ["<exact issue 1>", "<exact issue 2>"],
+      "rewrite": "<if score < 7, write a better version using their actual background; otherwise null>"
+    }},
+    "experience": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "weakest_bullets": ["<quote the 2-3 worst bullets verbatim>"],
+      "pattern_problems": ["<recurring structural problem across bullets>"],
+      "best_bullet": "<quote the single strongest bullet and explain briefly why it works>",
+      "impact_ratio": "<what % of bullets have real metrics? e.g. 2 out of 8 bullets (25%) have metrics>"
+    }},
+    "skills": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "issues": ["<specific skill section problems>"],
+      "missing_critical": ["<skills that should be here given their experience level>"]
+    }},
+    "education": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "relevance": "high/medium/low/not applicable"
+    }},
+    "overall_format": {{
+      "score": <0-10>,
+      "verdict": "<1 direct sentence>",
+      "issues": ["<specific format issues that would hurt them in ATS or with human screeners>"],
+      "ats_risks": ["<anything that could get auto-filtered before a human sees it>"]
+    }}
+  }},
+
+  "what_works": ["<3-5 genuinely strong elements — specific, not generic>"],
+
+  "top_3_fixes": [
+    "<the single change with highest ROI — do this first>",
+    "<second most impactful change>",
+    "<third most impactful change>"
+  ],
+
+  "rebuild_directives": {{
+    "summary_instruction": "<exact instruction for rewriting the summary>",
+    "bullet_formula": "<the specific formula every bullet should follow for this person's background>",
+    "skills_restructure": "<how to reorganize the skills section>",
+    "critical_additions": ["<content that must be added — specific>"],
+    "critical_removals": ["<content that must be cut — specific>"]
+  }},
+
+  "competitive_assessment": "<2-3 sentences: how does this stack up right now against the 200+ other applications they are competing with? Are they getting interviews or not?>",
+  "hiring_manager_note": "<the exact note you would write to the hiring manager — or your exact words for why you are passing>"
+}}
+
+Rules:
+- Quote actual resume text when citing problems (use verbatim quotes)
+- red_flags: find ALL of them, min 2, max 10, ranked by severity
+- experience_verdict and narrative_analysis require genuine analysis of their trajectory
+- market_benchmarks must reflect current market reality, not generic advice
+- rebuild_directives must be specific enough that someone can act on them immediately
+- No em dashes or en dashes anywhere in your response"""
+
+    resp = client.messages.create(
+        model=MODEL,
+        max_tokens=3500,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+
+    result_text = _clean_dashes(resp.content[0].text.strip())
+
+    try:
+        start = result_text.find("{")
+        end = result_text.rfind("}") + 1
+        if start >= 0 and end > start:
+            return _json.loads(result_text[start:end])
+    except (_json.JSONDecodeError, ValueError):
+        pass
+
+    return {
+        "recruiter_score": 50,
+        "would_forward": False,
+        "forward_verdict": "Could not parse critique.",
+        "first_impression": "Analysis failed.",
+        "experience_verdict": {"level_match": "unclear", "years_claimed": "unknown", "credibility": "medium", "credibility_reason": "Analysis failed."},
+        "narrative_analysis": {"career_story_score": 5, "is_coherent": True, "trajectory": "unclear", "gaps_or_red_flags": [], "story_verdict": "Analysis failed."},
+        "market_benchmarks": {"vs_similar_candidates": "average", "interview_probability": "unknown", "biggest_differentiator": None, "biggest_liability": "Analysis failed.", "market_context": ""},
+        "red_flags": [],
+        "section_analysis": {},
+        "what_works": [],
+        "top_3_fixes": [],
+        "rebuild_directives": {"summary_instruction": "", "bullet_formula": "", "skills_restructure": "", "critical_additions": [], "critical_removals": []},
+        "competitive_assessment": "",
+        "hiring_manager_note": "",
+    }
+
+
+async def build_resume_from_critique(
+    resume_text: str,
+    critique: dict,
+    job_description: str = "",
+    candidate_name: str = "",
+) -> dict:
+    """
+    Build a completely new resume that directly addresses every issue from the critique.
+    Returns structured resume data for DOCX generation.
+    """
+    import json as _json
+
+    client = _get_client()
+
+    # Summarize the critique into actionable directives
+    red_flags = critique.get("red_flags", [])
+    top_fixes = critique.get("top_3_fixes", [])
+    section = critique.get("section_analysis", {})
+    summary_rewrite = (section.get("summary") or {}).get("rewrite") or ""
+    weak_bullets = (section.get("experience") or {}).get("weakest_bullets", [])
+    bullet_problems = (section.get("experience") or {}).get("pattern_problems", [])
+    format_issues = (section.get("overall_format") or {}).get("issues", [])
+    ats_risks = (section.get("overall_format") or {}).get("ats_risks", [])
+    missing_skills = (section.get("skills") or {}).get("missing_critical", [])
+
+    # Pull rebuild_directives if present (from enhanced critique)
+    rd = critique.get("rebuild_directives", {})
+    bullet_formula = rd.get("bullet_formula", "")
+    summary_instruction = rd.get("summary_instruction", "")
+    skills_restructure = rd.get("skills_restructure", "")
+    critical_additions = rd.get("critical_additions", [])
+    critical_removals = rd.get("critical_removals", [])
+
+    # Pull market and experience context
+    ev = critique.get("experience_verdict", {})
+    na = critique.get("narrative_analysis", {})
+    mb = critique.get("market_benchmarks", {})
+
+    critique_summary = f"""CRITIQUE FINDINGS (fix ALL of these):
+
+Recruiter score: {critique.get('recruiter_score', 'N/A')}/100
+Would forward: {'Yes' if critique.get('would_forward') else 'No'}
+Forward verdict: {critique.get('forward_verdict', '')}
+
+Red flags to eliminate:
+{chr(10).join(f"- [{f['severity'].upper()}] {f['flag']} | Fix: {f['fix']}" for f in red_flags)}
+
+Top priority fixes:
+{chr(10).join(f"{i+1}. {fix}" for i, fix in enumerate(top_fixes))}
+
+Bullet pattern problems to fix across ALL bullets:
+{chr(10).join(f"- {p}" for p in bullet_problems)}
+
+Format issues:
+{chr(10).join(f"- {i}" for i in format_issues)}
+
+ATS risks (must fix for automated screening):
+{chr(10).join(f"- {r}" for r in ats_risks)}
+
+Missing critical skills to add:
+{chr(10).join(f"- {s}" for s in missing_skills)}
+
+Recruiter's summary instruction:
+{summary_instruction or (summary_rewrite if summary_rewrite else 'Rewrite completely to pass 6-second test')}
+
+Bullet formula to use for every bullet:
+{bullet_formula or 'Action Verb + specific what + measurable impact'}
+
+Skills section restructure:
+{skills_restructure or 'Reorganize into technical/tools/soft categories'}
+
+Content to add (critical):
+{chr(10).join(f"+ {a}" for a in critical_additions)}
+
+Content to remove:
+{chr(10).join(f"- {r}" for r in critical_removals)}
+
+Weakest bullets (rewrite completely):
+{chr(10).join(f'- "{b}"' for b in weak_bullets)}
+
+Experience verdict: {ev.get('level_match', '')} | Credibility: {ev.get('credibility', '')}
+Career trajectory: {na.get('trajectory', '')}
+Market position: {mb.get('vs_similar_candidates', '')} | Interview probability: {mb.get('interview_probability', '')}
+Biggest liability: {mb.get('biggest_liability', '')}"""
+
+    jd_section = f"\nTARGET JOB DESCRIPTION:\n{job_description[:2000]}\n" if job_description.strip() else ""
+
+    system_prompt = f"""You are a world-class resume writer who has read the recruiter's critique
+of this candidate's resume. Your job is to build the best possible version of their resume
+that directly addresses EVERY issue the recruiter raised.
+
+You take the original resume as a source of facts (employers, dates, degrees, real accomplishments)
+and completely rebuild it to fix all identified problems. You never fabricate facts.
+
+Your rebuilt resume will be evaluated by the same brutal recruiter. It must earn an 80+ score.
+{NO_DASH_INSTRUCTION}"""
+
+    user_prompt = f"""Rebuild this resume to fix every issue the recruiter identified.
+
+ORIGINAL RESUME (facts only — rewrite all text):
+{resume_text[:4000] if resume_text else 'No resume'}
+{jd_section}
+{critique_summary}
+
+REBUILD REQUIREMENTS:
+1. Fix EVERY red flag listed above
+2. Rewrite ALL weak bullets with strong action verbs + specific metrics
+3. Fix ALL bullet pattern problems across every position
+4. Fix ALL format issues
+5. Write a compelling summary that passes the 6-second test
+6. Keep all real employers, dates, degrees — never fabricate facts
+7. Every bullet: Action Verb + What you did + Measurable impact
+
+Return the same JSON structure as generate_ats_resume:
+{{
+  "candidate_name": "{candidate_name or 'Candidate Name'}",
+  "contact_line": "email@example.com | +1 (555) 000-0000 | linkedin.com/in/username | City, State",
+  "summary": "<3-sentence summary that passes the 6-second test — specific, metric-driven, no cliches>",
+  "skills": {{
+    "technical": ["skill1", "skill2"],
+    "tools": ["tool1", "tool2"],
+    "soft": ["Leadership", "Cross-functional collaboration"]
+  }},
+  "experience": [
+    {{
+      "title": "Job Title",
+      "company": "Company Name",
+      "location": "City, State or Remote",
+      "start": "Month YYYY",
+      "end": "Month YYYY or Present",
+      "bullets": ["Action verb + what + metric", "Action verb + what + metric"]
+    }}
+  ],
+  "education": [
+    {{
+      "degree": "Degree Name",
+      "school": "University Name",
+      "year": "YYYY",
+      "gpa": "X.X or null",
+      "honors": "honors or null"
+    }}
+  ],
+  "certifications": ["Cert Name - Issuer (Year)"],
+  "projects": [
+    {{
+      "name": "Project Name",
+      "description": "One sentence with tech stack and impact",
+      "url": "url or null"
+    }}
+  ],
+  "critique_fixes_applied": ["<list each red flag you fixed and how>"],
+  "optimization_notes": ["<what changed and why it will score higher with the recruiter>"]
+}}
+
+No em dashes or en dashes anywhere."""
+
+    resp = client.messages.create(
+        model=MODEL,
+        max_tokens=4000,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+
+    result_text = _clean_dashes(resp.content[0].text.strip())
+
+    try:
+        start = result_text.find("{")
+        end = result_text.rfind("}") + 1
+        if start >= 0 and end > start:
+            return _json.loads(result_text[start:end])
+    except (_json.JSONDecodeError, ValueError, TypeError):
+        pass
+
+    return {}
+
+
 async def filter_hiring_posts(posts: list) -> list:
     """
     Use Claude to filter a batch of scraped posts to only genuine personal hiring announcements.

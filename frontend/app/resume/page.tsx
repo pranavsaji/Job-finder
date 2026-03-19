@@ -5,9 +5,11 @@ import {
   Upload, FileText, Trash2, Download, Sparkles, X,
   CheckCircle, AlertCircle, ChevronDown, ChevronUp,
   Zap, Target, BarChart2, ArrowRight, Clock, Copy, Check,
-  Linkedin, Loader2, Mail, RefreshCw,
+  Linkedin, Loader2, Mail, RefreshCw, ShieldAlert, Flame,
+  TrendingUp, TrendingDown, Minus, Users, Brain, Scissors,
+  PlusCircle,
 } from "lucide-react";
-import { resumeApi, jobsApi, Job, resumeVersionsApi, linkedinOptimizeApi, coverLetterApi } from "@/lib/api";
+import { resumeApi, jobsApi, Job, resumeVersionsApi, linkedinOptimizeApi, coverLetterApi, resumeCritiqueApi } from "@/lib/api";
 import toast from "react-hot-toast";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -70,7 +72,7 @@ interface LinkedInOptimizeResult {
   raw?: string;
 }
 
-type TabType = "ats" | "versions" | "linkedin" | "coverletter";
+type TabType = "ats" | "versions" | "linkedin" | "coverletter" | "critique";
 
 // ─── Score dimension config ──────────────────────────────────────────────────
 
@@ -981,6 +983,596 @@ function CoverLetterTab({ jobs }: { jobs: Job[] }) {
   );
 }
 
+// ─── Tab: Recruiter Critique ─────────────────────────────────────────────────
+
+interface RedFlag {
+  severity: "dealbreaker" | "major" | "minor";
+  flag: string;
+  quote: string | null;
+  fix: string;
+}
+
+interface SectionScore {
+  score: number;
+  verdict: string;
+  specific_issues?: string[];
+  rewrite?: string | null;
+  weakest_bullets?: string[];
+  pattern_problems?: string[];
+  best_bullet?: string;
+  issues?: string[];
+  missing_critical?: string[];
+  ats_risks?: string[];
+  impact_ratio?: string;
+  relevance?: string;
+}
+
+interface ExperienceVerdict {
+  level_match: string;
+  years_claimed: string;
+  credibility: "high" | "medium" | "low";
+  credibility_reason: string;
+}
+
+interface NarrativeAnalysis {
+  career_story_score: number;
+  is_coherent: boolean;
+  trajectory: string;
+  gaps_or_red_flags: string[];
+  story_verdict: string;
+}
+
+interface MarketBenchmarks {
+  vs_similar_candidates: string;
+  interview_probability: string;
+  biggest_differentiator: string | null;
+  biggest_liability: string;
+  market_context: string;
+}
+
+interface RebuildDirectives {
+  summary_instruction: string;
+  bullet_formula: string;
+  skills_restructure: string;
+  critical_additions: string[];
+  critical_removals: string[];
+}
+
+interface Critique {
+  recruiter_score: number;
+  would_forward: boolean;
+  forward_verdict: string;
+  first_impression: string;
+  experience_verdict?: ExperienceVerdict;
+  narrative_analysis?: NarrativeAnalysis;
+  market_benchmarks?: MarketBenchmarks;
+  red_flags: RedFlag[];
+  section_analysis: {
+    summary?: SectionScore;
+    experience?: SectionScore;
+    skills?: SectionScore;
+    education?: SectionScore;
+    overall_format?: SectionScore;
+  };
+  what_works: string[];
+  top_3_fixes: string[];
+  rebuild_directives?: RebuildDirectives;
+  competitive_assessment: string;
+  hiring_manager_note: string;
+}
+
+function RecruiterCritiqueTab() {
+  const [jobDesc, setJobDesc] = useState("");
+  const [critiquing, setCritiquing] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const [critique, setCritique] = useState<Critique | null>(null);
+
+  async function handleCritique() {
+    setCritiquing(true);
+    setCritique(null);
+    try {
+      const res = await resumeCritiqueApi.critique({ job_description: jobDesc.trim() || undefined });
+      setCritique(res.data);
+    } catch {
+      toast.error("Critique failed. Try again.");
+    } finally {
+      setCritiquing(false);
+    }
+  }
+
+  async function handleBuild() {
+    if (!critique) return;
+    setBuilding(true);
+    try {
+      const res = await resumeCritiqueApi.buildFromCritique({
+        critique,
+        job_description: jobDesc.trim() || undefined,
+      });
+      const blob = new Blob([res.data], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "Rebuilt_Resume.docx";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Rebuilt resume downloaded!");
+    } catch {
+      toast.error("Build failed. Try again.");
+    } finally {
+      setBuilding(false);
+    }
+  }
+
+  const scoreColor = !critique ? "#a78bfa"
+    : critique.recruiter_score >= 80 ? "#4ade80"
+    : critique.recruiter_score >= 61 ? "#60a5fa"
+    : critique.recruiter_score >= 41 ? "#f59e0b"
+    : "#f87171";
+
+  const severityConfig = {
+    dealbreaker: { bg: "rgba(248,113,113,0.12)", border: "rgba(248,113,113,0.3)", color: "#f87171", label: "DEAL BREAKER" },
+    major:       { bg: "rgba(251,191,36,0.1)",  border: "rgba(251,191,36,0.3)",  color: "#fbbf24", label: "MAJOR" },
+    minor:       { bg: "rgba(148,163,184,0.08)", border: "rgba(148,163,184,0.2)", color: "#94a3b8", label: "MINOR" },
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Setup */}
+      <div className="glass-card p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.25)" }}>
+            <ShieldAlert size={16} className="text-red-400" />
+          </div>
+          <div>
+            <p className="text-white/80 font-semibold text-sm">Recruiter Critique</p>
+            <p className="text-white/35 text-xs mt-0.5">
+              A principal recruiter who screens 1,000+ resumes every week evaluates your resume the way they do in the field.
+              Experience verdict, career narrative, market position, red flags, and a full rebuild blueprint. No sugar-coating.
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-white/40 text-xs block mb-1.5">Job description (optional — sharpens the critique)</label>
+          <textarea
+            value={jobDesc}
+            onChange={e => setJobDesc(e.target.value)}
+            rows={3}
+            placeholder="Paste a job description to get role-specific feedback…"
+            className="input-field w-full resize-none text-sm"
+          />
+        </div>
+
+        <button onClick={handleCritique} disabled={critiquing}
+          className="btn-primary w-full justify-center"
+          style={{ background: "linear-gradient(135deg, rgba(248,113,113,0.3), rgba(239,68,68,0.15))", borderColor: "rgba(248,113,113,0.4)", color: "#fca5a5" }}>
+          <ShieldAlert size={14} />
+          {critiquing ? "Analysing your resume…" : "Get Brutal Critique"}
+        </button>
+      </div>
+
+      {critiquing && (
+        <div className="glass-card p-10 text-center">
+          <div className="w-14 h-14 rounded-full mx-auto mb-4 flex items-center justify-center animate-pulse"
+            style={{ background: "rgba(248,113,113,0.12)" }}>
+            <ShieldAlert className="text-red-400" size={26} />
+          </div>
+          <p className="text-white/60 font-medium">Jordan is reviewing your resume…</p>
+          <p className="text-white/25 text-xs mt-1">Principal recruiter, 80,000+ resumes reviewed. 1,000+ per week. No filter.</p>
+        </div>
+      )}
+
+      {critique && (
+        <div className="space-y-4">
+          {/* Verdict banner */}
+          <div className="glass-card p-5"
+            style={{ background: `${scoreColor}0d`, border: `1px solid ${scoreColor}30` }}>
+            <div className="flex items-center gap-5">
+              <div className="relative w-20 h-20 flex-shrink-0">
+                <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                  <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="3" />
+                  <circle cx="18" cy="18" r="15.9" fill="none"
+                    stroke={scoreColor} strokeWidth="3"
+                    strokeDasharray={`${critique.recruiter_score} ${100 - critique.recruiter_score}`}
+                    strokeLinecap="round"
+                    style={{ transition: "stroke-dasharray 1s ease" }}
+                  />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-2xl font-black" style={{ color: scoreColor }}>{critique.recruiter_score}</span>
+                  <span className="text-white/25 text-[9px]">/100</span>
+                </div>
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-sm font-bold px-2.5 py-1 rounded-full"
+                    style={{ background: critique.would_forward ? "rgba(74,222,128,0.15)" : "rgba(248,113,113,0.15)",
+                             color: critique.would_forward ? "#4ade80" : "#f87171",
+                             border: `1px solid ${critique.would_forward ? "rgba(74,222,128,0.3)" : "rgba(248,113,113,0.3)"}` }}>
+                    {critique.would_forward ? "✓ Would Forward" : "✗ Would Not Forward"}
+                  </span>
+                </div>
+                <p className="text-white/70 text-sm leading-relaxed">{critique.forward_verdict}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* First impression */}
+          <div className="glass-card p-4"
+            style={{ background: "rgba(248,113,113,0.04)", border: "1px solid rgba(248,113,113,0.15)" }}>
+            <p className="text-red-400/60 text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Zap size={11} /> First 6-second impression
+            </p>
+            <p className="text-white/65 text-sm leading-relaxed italic">"{critique.first_impression}"</p>
+          </div>
+
+          {/* Experience verdict + narrative — side by side */}
+          {(critique.experience_verdict || critique.narrative_analysis) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {critique.experience_verdict && (() => {
+                const ev = critique.experience_verdict!;
+                const credColor = ev.credibility === "high" ? "#4ade80" : ev.credibility === "medium" ? "#f59e0b" : "#f87171";
+                const levelColor = ev.level_match === "matched" ? "#4ade80" : ev.level_match === "over-qualified" ? "#60a5fa" : ev.level_match === "under-qualified" ? "#f87171" : "#94a3b8";
+                return (
+                  <div className="glass-card p-4">
+                    <p className="text-white/40 text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                      <Brain size={11} /> Experience Assessment
+                    </p>
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-white/40 text-xs">Level match</span>
+                        <span className="text-xs font-bold capitalize px-2 py-0.5 rounded"
+                          style={{ color: levelColor, background: `${levelColor}18`, border: `1px solid ${levelColor}30` }}>
+                          {ev.level_match}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-white/40 text-xs">Claimed exp.</span>
+                        <span className="text-white/65 text-xs font-medium">{ev.years_claimed}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-white/40 text-xs">Credibility</span>
+                        <span className="text-xs font-bold capitalize px-2 py-0.5 rounded"
+                          style={{ color: credColor, background: `${credColor}18`, border: `1px solid ${credColor}30` }}>
+                          {ev.credibility}
+                        </span>
+                      </div>
+                      <p className="text-white/35 text-xs leading-relaxed pt-1 border-t border-white/[0.05]">{ev.credibility_reason}</p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {critique.narrative_analysis && (() => {
+                const na = critique.narrative_analysis!;
+                const trajIcon = na.trajectory === "ascending" ? <TrendingUp size={11} className="text-green-400" /> :
+                                 na.trajectory === "declining" ? <TrendingDown size={11} className="text-red-400" /> :
+                                 <Minus size={11} className="text-amber-400" />;
+                const trajColor = na.trajectory === "ascending" ? "#4ade80" : na.trajectory === "declining" ? "#f87171" : "#f59e0b";
+                const storyColor = na.career_story_score >= 7 ? "#4ade80" : na.career_story_score >= 5 ? "#f59e0b" : "#f87171";
+                return (
+                  <div className="glass-card p-4">
+                    <p className="text-white/40 text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                      {trajIcon} Career Narrative
+                    </p>
+                    <div className="space-y-2.5">
+                      <div className="flex items-center gap-3">
+                        <span className="text-white/40 text-xs w-20 flex-shrink-0">Story</span>
+                        <div className="flex-1 h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }}>
+                          <div className="h-full rounded-full transition-all" style={{ width: `${na.career_story_score * 10}%`, background: storyColor }} />
+                        </div>
+                        <span className="text-xs font-bold" style={{ color: storyColor }}>{na.career_story_score}/10</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-white/40 text-xs">Trajectory</span>
+                        <span className="text-xs font-bold capitalize" style={{ color: trajColor }}>{na.trajectory}</span>
+                      </div>
+                      <p className="text-white/45 text-xs leading-relaxed">{na.story_verdict}</p>
+                      {na.gaps_or_red_flags.length > 0 && (
+                        <ul className="space-y-1 pt-1 border-t border-white/[0.05]">
+                          {na.gaps_or_red_flags.map((g, i) => (
+                            <li key={i} className="text-amber-400/60 text-xs flex items-start gap-1.5">
+                              <span className="flex-shrink-0 text-[10px]">!</span>{g}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* Market benchmarks */}
+          {critique.market_benchmarks && (() => {
+            const mb = critique.market_benchmarks!;
+            const rankColor = mb.vs_similar_candidates === "top 10%" ? "#4ade80" :
+                              mb.vs_similar_candidates === "above average" ? "#60a5fa" :
+                              mb.vs_similar_candidates === "average" ? "#f59e0b" : "#f87171";
+            return (
+              <div className="glass-card p-5"
+                style={{ background: "rgba(96,165,250,0.04)", border: "1px solid rgba(96,165,250,0.15)" }}>
+                <p className="text-blue-400/70 text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                  <Users size={11} /> Market Position
+                </p>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="rounded-lg p-3 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <p className="text-white/30 text-[10px] mb-1">vs. Similar Candidates</p>
+                    <p className="font-bold text-sm capitalize" style={{ color: rankColor }}>{mb.vs_similar_candidates}</p>
+                  </div>
+                  <div className="rounded-lg p-3 text-center" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <p className="text-white/30 text-[10px] mb-1">Interview Probability</p>
+                    <p className="font-bold text-sm text-white/75">{mb.interview_probability}</p>
+                  </div>
+                </div>
+                {mb.biggest_differentiator && (
+                  <div className="mb-2 p-2.5 rounded-lg" style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)" }}>
+                    <span className="text-green-400/60 text-[10px] font-semibold">DIFFERENTIATOR: </span>
+                    <span className="text-white/55 text-xs">{mb.biggest_differentiator}</span>
+                  </div>
+                )}
+                <div className="mb-2 p-2.5 rounded-lg" style={{ background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)" }}>
+                  <span className="text-red-400/60 text-[10px] font-semibold">BIGGEST LIABILITY: </span>
+                  <span className="text-white/55 text-xs">{mb.biggest_liability}</span>
+                </div>
+                {mb.market_context && <p className="text-white/40 text-xs leading-relaxed">{mb.market_context}</p>}
+              </div>
+            );
+          })()}
+
+          {/* Red flags */}
+          {critique.red_flags.length > 0 && (
+            <div className="glass-card p-5">
+              <p className="text-white/50 text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <ShieldAlert size={12} className="text-red-400" /> Red Flags ({critique.red_flags.length})
+              </p>
+              <div className="space-y-2.5">
+                {critique.red_flags.map((flag, i) => {
+                  const cfg = severityConfig[flag.severity] || severityConfig.minor;
+                  return (
+                    <div key={i} className="rounded-xl p-3.5"
+                      style={{ background: cfg.bg, border: `1px solid ${cfg.border}` }}>
+                      <div className="flex items-start gap-2.5">
+                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5"
+                          style={{ background: `${cfg.color}20`, color: cfg.color, border: `1px solid ${cfg.color}40` }}>
+                          {cfg.label}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white/75 text-xs font-medium leading-snug">{flag.flag}</p>
+                          {flag.quote && (
+                            <p className="text-white/35 text-xs mt-1 italic line-through">"{flag.quote}"</p>
+                          )}
+                          <p className="text-xs mt-1.5 leading-relaxed" style={{ color: cfg.color }}>
+                            Fix: {flag.fix}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Section scores */}
+          <div className="glass-card p-5">
+            <p className="text-white/50 text-xs font-semibold uppercase tracking-wider mb-3">Section-by-Section</p>
+            <div className="space-y-3">
+              {Object.entries(critique.section_analysis).map(([key, sec]) => {
+                if (!sec) return null;
+                const s = sec as SectionScore;
+                const c = s.score >= 7 ? "#4ade80" : s.score >= 5 ? "#f59e0b" : "#f87171";
+                return (
+                  <div key={key} className="rounded-xl p-3.5"
+                    style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="text-white/60 text-xs font-semibold capitalize w-28 flex-shrink-0">
+                        {key.replace(/_/g, " ")}
+                      </span>
+                      <div className="flex-1 h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.05)" }}>
+                        <div className="h-full rounded-full transition-all duration-700"
+                          style={{ width: `${s.score * 10}%`, background: c }} />
+                      </div>
+                      <span className="text-xs font-bold w-8 text-right flex-shrink-0" style={{ color: c }}>{s.score}/10</span>
+                    </div>
+                    <p className="text-white/45 text-xs leading-relaxed">{s.verdict}</p>
+                    {s.impact_ratio && (
+                      <p className="text-white/30 text-[11px] mt-1">Impact ratio: {s.impact_ratio}</p>
+                    )}
+                    {s.specific_issues && s.specific_issues.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {s.specific_issues.map((issue, j) => (
+                          <li key={j} className="text-white/35 text-xs flex items-start gap-1.5">
+                            <span className="text-red-400/50 flex-shrink-0">!</span>{issue}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {s.pattern_problems && s.pattern_problems.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {s.pattern_problems.map((p, j) => (
+                          <li key={j} className="text-amber-400/60 text-xs flex items-start gap-1.5">
+                            <span className="flex-shrink-0">↻</span>{p}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {s.missing_critical && s.missing_critical.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {s.missing_critical.map((m, j) => (
+                          <li key={j} className="text-blue-400/60 text-xs flex items-start gap-1.5">
+                            <span className="flex-shrink-0">+</span>{m}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {s.ats_risks && s.ats_risks.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {s.ats_risks.map((r, j) => (
+                          <li key={j} className="text-orange-400/60 text-xs flex items-start gap-1.5">
+                            <span className="flex-shrink-0 text-[10px]">ATS</span>{r}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {s.rewrite && (
+                      <div className="mt-2.5 p-2.5 rounded-lg text-xs text-green-300/70 leading-relaxed"
+                        style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)" }}>
+                        <p className="text-green-400/60 text-[10px] font-semibold mb-1">SUGGESTED REWRITE</p>
+                        {s.rewrite}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* What works */}
+          {critique.what_works.length > 0 && (
+            <div className="glass-card p-5">
+              <p className="text-white/50 text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <CheckCircle size={12} className="text-green-400" /> What Works
+              </p>
+              <ul className="space-y-1.5">
+                {critique.what_works.map((w, i) => (
+                  <li key={i} className="flex items-start gap-2 text-white/55 text-xs leading-relaxed">
+                    <span className="text-green-400/60 flex-shrink-0 font-bold">+</span>{w}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Top 3 fixes */}
+          {critique.top_3_fixes.length > 0 && (
+            <div className="glass-card p-5"
+              style={{ background: "rgba(251,191,36,0.04)", border: "1px solid rgba(251,191,36,0.15)" }}>
+              <p className="text-amber-400/70 text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Flame size={12} /> Top Priority Fixes
+              </p>
+              <ol className="space-y-2.5">
+                {critique.top_3_fixes.map((fix, i) => (
+                  <li key={i} className="flex items-start gap-2.5 text-xs leading-relaxed">
+                    <span className="text-amber-400 font-black flex-shrink-0 w-5">{i + 1}.</span>
+                    <span className="text-white/65">{fix}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {/* Rebuild directives */}
+          {critique.rebuild_directives && (() => {
+            const rd = critique.rebuild_directives!;
+            return (
+              <div className="glass-card p-5"
+                style={{ background: "rgba(139,92,246,0.04)", border: "1px solid rgba(139,92,246,0.2)" }}>
+                <p className="text-purple-400/70 text-xs font-semibold uppercase tracking-wider mb-4 flex items-center gap-1.5">
+                  <Sparkles size={11} /> Rebuild Blueprint
+                </p>
+                <div className="space-y-3">
+                  {rd.summary_instruction && (
+                    <div>
+                      <p className="text-white/30 text-[10px] font-semibold mb-1">SUMMARY INSTRUCTION</p>
+                      <p className="text-white/55 text-xs leading-relaxed">{rd.summary_instruction}</p>
+                    </div>
+                  )}
+                  {rd.bullet_formula && (
+                    <div>
+                      <p className="text-white/30 text-[10px] font-semibold mb-1">BULLET FORMULA</p>
+                      <p className="text-white/55 text-xs leading-relaxed font-mono">{rd.bullet_formula}</p>
+                    </div>
+                  )}
+                  {rd.skills_restructure && (
+                    <div>
+                      <p className="text-white/30 text-[10px] font-semibold mb-1">SKILLS RESTRUCTURE</p>
+                      <p className="text-white/55 text-xs leading-relaxed">{rd.skills_restructure}</p>
+                    </div>
+                  )}
+                  {rd.critical_additions.length > 0 && (
+                    <div>
+                      <p className="text-white/30 text-[10px] font-semibold mb-1.5 flex items-center gap-1">
+                        <PlusCircle size={9} className="text-green-400/60" /> MUST ADD
+                      </p>
+                      <ul className="space-y-1">
+                        {rd.critical_additions.map((a, i) => (
+                          <li key={i} className="text-green-300/60 text-xs flex items-start gap-1.5">
+                            <span className="flex-shrink-0">+</span>{a}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {rd.critical_removals.length > 0 && (
+                    <div>
+                      <p className="text-white/30 text-[10px] font-semibold mb-1.5 flex items-center gap-1">
+                        <Scissors size={9} className="text-red-400/60" /> MUST REMOVE
+                      </p>
+                      <ul className="space-y-1">
+                        {rd.critical_removals.map((r, i) => (
+                          <li key={i} className="text-red-300/60 text-xs flex items-start gap-1.5 line-through">
+                            <span className="flex-shrink-0 no-underline" style={{ textDecoration: "none" }}>-</span>{r}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Competitive assessment */}
+          {critique.competitive_assessment && (
+            <div className="glass-card p-4">
+              <p className="text-white/35 text-xs font-semibold uppercase tracking-wider mb-2">How you compare</p>
+              <p className="text-white/55 text-sm leading-relaxed">{critique.competitive_assessment}</p>
+            </div>
+          )}
+
+          {/* Hiring manager note */}
+          {critique.hiring_manager_note && (
+            <div className="glass-card p-4"
+              style={{ background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.2)" }}>
+              <p className="text-purple-400/60 text-xs font-semibold uppercase tracking-wider mb-2">
+                What I'd write to the hiring manager
+              </p>
+              <p className="text-white/55 text-sm leading-relaxed italic">"{critique.hiring_manager_note}"</p>
+            </div>
+          )}
+
+          {/* Build from critique CTA */}
+          <div className="glass-card p-5 text-center"
+            style={{ background: "rgba(52,211,153,0.04)", border: "1px solid rgba(52,211,153,0.2)" }}>
+            <Download size={24} className="mx-auto mb-2 text-emerald-400/60" />
+            <p className="text-white/70 font-semibold text-sm mb-1">Build Fixed Resume</p>
+            <p className="text-white/30 text-xs mb-4 max-w-sm mx-auto">
+              Claude rebuilds your entire resume from scratch using the recruiter's blueprint above.
+              Every red flag fixed. Every weak bullet rewritten. Every issue addressed. Downloads as DOCX.
+            </p>
+            <button onClick={handleBuild} disabled={building}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-40"
+              style={{
+                background: "linear-gradient(135deg, rgba(52,211,153,0.25), rgba(16,185,129,0.12))",
+                border: "1px solid rgba(52,211,153,0.35)",
+                color: "#34d399",
+              }}>
+              {building ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+              {building ? "Building improved resume…" : "Build Fixed Resume (.docx)"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function ResumePage() {
@@ -1091,6 +1683,7 @@ export default function ResumePage() {
 
   const TABS: { id: TabType; label: string; icon: React.ReactNode }[] = [
     { id: "ats", label: "ATS Audit", icon: <BarChart2 size={13} /> },
+    { id: "critique", label: "Recruiter Critique", icon: <ShieldAlert size={13} /> },
     { id: "versions", label: "Versions", icon: <Clock size={13} /> },
     { id: "linkedin", label: "LinkedIn Optimizer", icon: <Linkedin size={13} /> },
     { id: "coverletter", label: "Cover Letter", icon: <Mail size={13} /> },
@@ -1188,6 +1781,7 @@ export default function ResumePage() {
           uploading={uploading}
         />
       )}
+      {activeTab === "critique" && <RecruiterCritiqueTab />}
       {activeTab === "versions" && <VersionsTab />}
       {activeTab === "linkedin" && <LinkedInOptimizerTab />}
       {activeTab === "coverletter" && <CoverLetterTab jobs={jobs} />}

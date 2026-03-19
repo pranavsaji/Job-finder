@@ -111,6 +111,42 @@ def _migrate_db():
             print("Migration applied: jobs.match_score")
         except Exception:
             pass  # Column already exists
+        try:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN matched_role VARCHAR(500)"))
+            conn.commit()
+            print("Migration applied: jobs.matched_role")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN salary_range VARCHAR(200)"))
+            conn.commit()
+            print("Migration applied: jobs.salary_range")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE users ADD COLUMN scraping_preferences TEXT DEFAULT '{}'"))
+            conn.commit()
+            print("Migration applied: users.scraping_preferences")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE users ADD COLUMN resume_filename VARCHAR(500)"))
+            conn.commit()
+            print("Migration applied: users.resume_filename")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE users ADD COLUMN hunter_api_key VARCHAR(500)"))
+            conn.commit()
+            print("Migration applied: users.hunter_api_key")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE users ADD COLUMN target_roles TEXT DEFAULT '[]'"))
+            conn.commit()
+            print("Migration applied: users.target_roles")
+        except Exception:
+            pass
 
 
 def _seed_admin():

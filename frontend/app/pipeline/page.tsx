@@ -24,7 +24,8 @@ interface PipelineContact {
 interface StageHistoryEntry {
   stage: string;
   note?: string;
-  timestamp: string;
+  ts?: string;
+  timestamp?: string;
 }
 
 interface PipelineEntry {
@@ -389,7 +390,7 @@ function DetailPanel({
                       <div className="flex items-center gap-2">
                         <span className="text-white/70 text-xs font-medium">{hcfg?.label || h.stage}</span>
                         <span className="text-white/25 text-[10px]">
-                          {new Date(h.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          {new Date(h.ts || h.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         </span>
                       </div>
                       {h.note && <p className="text-white/35 text-[11px] mt-0.5">{h.note}</p>}
@@ -590,7 +591,7 @@ export default function PipelinePage() {
   async function loadPipeline() {
     try {
       const res = await pipelineApi.list();
-      setEntries(res.data || []);
+      setEntries(res.data.entries || []);
     } catch {
       toast.error("Failed to load pipeline");
     } finally {

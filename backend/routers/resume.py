@@ -299,6 +299,72 @@ class LinkedInOptimizeRequest(BaseModel):
     target_company: Optional[str] = None
 
 
+# ── Resume Critic ────────────────────────────────────────────────────────────
+
+class CritiqueRequest(BaseModel):
+    job_description: Optional[str] = None
+
+
+class BuildFromCritiqueRequest(BaseModel):
+    critique: dict
+    job_description: Optional[str] = None
+
+
+@router.post("/critique")
+def critique_resume(
+    payload: CritiqueRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Brutal resume critique from a senior recruiter who screens 1000+ resumes/day."""
+    if not current_user.resume_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No resume uploaded. Upload your resume first.",
+        )
+    import asyncio
+    result = claude_service.critique_resume(
+        resume_text=current_user.resume_text,
+        job_description=payload.job_description or "",
+    )
+    return result
+
+
+@router.post("/build-from-critique")
+async def build_from_critique(
+    payload: BuildFromCritiqueRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Build a new ATS-optimized resume that fixes every issue from the critique. Returns DOCX."""
+    if not current_user.resume_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No resume uploaded.",
+        )
+
+    structured = await claude_service.build_resume_from_critique(
+        resume_text=current_user.resume_text,
+        critique=payload.critique,
+        job_description=payload.job_description or "",
+        candidate_name=current_user.name or "",
+    )
+
+    if not structured:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Resume build failed. Please try again.",
+        )
+
+    docx_bytes = build_ats_resume_docx(structured)
+    name_slug = (current_user.name or "resume").replace(" ", "_")
+    filename = f"{name_slug}_Rebuilt_Resume.docx"
+
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/linkedin-optimize")
 def optimize_linkedin(
     payload: LinkedInOptimizeRequest,

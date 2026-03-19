@@ -477,6 +477,18 @@ export const contactsApi = {
     getApi().post("/contacts/from-network", { people }),
 };
 
+// Resume Critic API
+export const resumeCritiqueApi = {
+  critique: (data: { job_description?: string }) =>
+    getApi().post("/resume/critique", data, { timeout: 60000 }),
+
+  buildFromCritique: (data: { critique: object; job_description?: string }) =>
+    getApi().post("/resume/build-from-critique", data, {
+      responseType: "blob",
+      timeout: 120000,
+    }),
+};
+
 // Extended Resume API additions
 export const resumeVersionsApi = {
   list: () => getApi().get("/resume/versions"),

@@ -3,6 +3,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.middleware.auth import get_current_user
@@ -66,7 +67,7 @@ def get_pipeline_stats(
 ):
     """Return counts per stage for dashboard."""
     rows = (
-        db.query(PipelineEntry.stage, db.func.count(PipelineEntry.id))
+        db.query(PipelineEntry.stage, func.count(PipelineEntry.id))
         .filter(PipelineEntry.user_id == current_user.id)
         .group_by(PipelineEntry.stage)
         .all()

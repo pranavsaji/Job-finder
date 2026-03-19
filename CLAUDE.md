@@ -82,5 +82,17 @@ cd frontend && npm run dev                       # frontend (http://localhost:30
 - **Backend:** Railway auto-deploys on push to `main`
 - **Frontend:** Vercel auto-deploys; set `NEXT_PUBLIC_API_URL` to Railway backend URL
 
+## Bug Fixes Applied
+- `GET /jobs 500`: Added missing DB migrations for `jobs.matched_role`, `jobs.salary_range`, `users.scraping_preferences`, `users.resume_filename`, `users.hunter_api_key`, `users.target_roles`
+- `pipeline/page.tsx`: Fixed `res.data.entries` (was `res.data`) — crash on `.filter()` since API returns `{entries: [...]}`
+- `pipeline/page.tsx`: Fixed stage history key `h.ts` (was `h.timestamp`) — "Invalid Date" in UI
+- `pipeline.py stats`: Fixed `db.func.count` → `func.count` (from sqlalchemy import)
+
+## Resume Critic (Enhanced)
+- **Recruiter persona**: Jordan Mills, 15yr field recruiter, 80k+ resumes, 1000+/week
+- **New critique fields**: `experience_verdict` (level match, credibility), `narrative_analysis` (trajectory, career story score), `market_benchmarks` (vs peers, interview probability, differentiator/liability), `rebuild_directives` (summary instruction, bullet formula, skills restructure, critical_additions/removals)
+- **Build from critique**: Now uses rebuild_directives + market context for higher-quality rebuild
+- **Frontend**: New UI sections for experience verdict, career narrative, market position, rebuild blueprint
+
 ## Last Updated
 2026-03-18
