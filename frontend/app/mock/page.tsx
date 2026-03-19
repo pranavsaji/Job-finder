@@ -10,7 +10,9 @@ import {
   Briefcase,
   CheckCircle2,
   ChevronDown,
+  Circle,
   Code2,
+  Download,
   DollarSign,
   Eye,
   Flame,
@@ -182,6 +184,18 @@ export default function MockPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Video recording
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const [recordingBlobUrl, setRecordingBlobUrl] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+
+  // Monaco editor ref for paste detection
+  const monacoEditorRef = useRef<any>(null);
+
+  // Auto-send code to interviewer after run
+  const [pendingCodeSend, setPendingCodeSend] = useState<string | null>(null);
+
   // Keep refs in sync with state for use in async callbacks
   useEffect(() => { voiceRef.current = voiceOn; }, [voiceOn]);
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
@@ -222,19 +236,69 @@ export default function MockPage() {
   // Webcam
   async function startVideo() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       streamRef.current = stream;
       if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
       setVideoOn(true);
+      startRecording(stream);
     } catch { toast.error("Camera access denied"); }
   }
 
   function stopVideo() {
+    stopRecording();
     streamRef.current?.getTracks().forEach(t => t.stop());
     setVideoOn(false);
   }
 
+  // Recording
+  function startRecording(stream?: MediaStream) {
+    const s = stream || streamRef.current;
+    if (!s) return;
+    const chunks: Blob[] = [];
+    recordedChunksRef.current = chunks;
+    try {
+      const mimeType = typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+        ? "video/webm;codecs=vp9" : "video/webm";
+      const mr = new MediaRecorder(s, { mimeType });
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      mr.onstop = () => {
+        const blob = new Blob(chunks, { type: "video/webm" });
+        setRecordingBlobUrl(URL.createObjectURL(blob));
+      };
+      mediaRecorderRef.current = mr;
+      mr.start(1000);
+      setIsRecording(true);
+    } catch { /* MediaRecorder not supported */ }
+  }
+
+  function stopRecording() {
+    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+    setIsRecording(false);
+  }
+
+  function downloadRecording() {
+    if (!recordingBlobUrl) return;
+    const a = document.createElement("a");
+    a.href = recordingBlobUrl;
+    a.download = `mock-interview-${company}-${Date.now()}.webm`;
+    a.click();
+  }
+
+  function deleteRecording() {
+    if (recordingBlobUrl) URL.revokeObjectURL(recordingBlobUrl);
+    setRecordingBlobUrl(null);
+    recordedChunksRef.current = [];
+  }
+
   useEffect(() => () => { streamRef.current?.getTracks().forEach(t => t.stop()); window.speechSynthesis?.cancel(); }, []);
+
+  // Abandon session if user closes tab mid-interview
+  useEffect(() => {
+    if (!sessionId || stage !== "active") return;
+    const handler = () => { mockApi.abandon(sessionId).catch(() => {}); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [sessionId, stage]);
 
   // ── TTS ────────────────────────────────────────────────────────────────
 
@@ -362,7 +426,7 @@ export default function MockPage() {
 
   async function finishAndEvaluate() {
     if (!sessionId) return;
-    window.speechSynthesis?.cancel(); stopListening();
+    window.speechSynthesis?.cancel(); stopListening(); stopRecording();
     setStage("evaluating");
     const totalSecs = (Date.now() - startTimeRef.current) / 1000;
     const avgConf = confidenceScoresRef.current.length
@@ -387,6 +451,7 @@ export default function MockPage() {
     setEvaluation(null); setInterviewComplete(false); setCheatWarning(false); setCode("// Write your solution here\n");
     fillerCountRef.current = 0; confidenceScoresRef.current = []; wordCountRef.current = 0;
     tabSwitchRef.current = 0; pasteCountRef.current = 0;
+    deleteRecording(); stopRecording(); setPendingCodeSend(null);
   }
 
   function formatTime(s: number) {
@@ -407,7 +472,11 @@ export default function MockPage() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setCodeOutput({ stdout: data.stdout || "", stderr: data.stderr || "", exit_code: data.exit_code ?? 0 });
+      const output = { stdout: data.stdout || "", stderr: data.stderr || "", exit_code: data.exit_code ?? 0 };
+      setCodeOutput(output);
+      // Prepare auto-send to interviewer (user can click "Send to Interviewer" in output panel)
+      const msg = `I ran my code. ${output.exit_code === 0 ? "It executed successfully." : "It has an error."}\n\n\`\`\`${codeLanguage}\n${code}\n\`\`\`\n\nOutput: ${output.stdout || "(no output)"}${output.stderr ? `\nError: ${output.stderr}` : ""}`;
+      setPendingCodeSend(msg);
     } catch {
       toast.error("Code execution failed");
     } finally {
@@ -588,6 +657,14 @@ export default function MockPage() {
                       <span className="text-white/35">{s.interview_type?.replace("_", " ")}</span>
                       <span className="text-white/20">·</span>
                       <span className="text-white/35">{s.difficulty}</span>
+                      <span className="text-white/20">·</span>
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+                        style={{
+                          background: s.status === "completed" ? "rgba(74,222,128,0.1)" : s.status === "abandoned" ? "rgba(248,113,113,0.1)" : "rgba(96,165,250,0.1)",
+                          color: s.status === "completed" ? "#4ade80" : s.status === "abandoned" ? "#f87171" : "#60a5fa",
+                        }}>
+                        {s.status}
+                      </span>
                       {s.started_at && (
                         <>
                           <span className="text-white/20">·</span>
@@ -760,6 +837,12 @@ export default function MockPage() {
             {tabSwitchRef.current > 0 ? `${tabSwitchRef.current} tab switch` : "Monitored"}
           </div>
         )}
+        {/* Recording indicator */}
+        {isRecording && (
+          <div className="flex items-center gap-1 text-[10px] text-red-400 px-2 py-0.5 rounded-full" style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)" }}>
+            <Circle size={7} className="fill-red-500 animate-pulse" /> REC
+          </div>
+        )}
         {/* Video toggle */}
         <button onClick={videoOn ? stopVideo : startVideo}
           className="w-7 h-7 rounded-lg flex items-center justify-center transition-all"
@@ -901,6 +984,19 @@ export default function MockPage() {
                     padding: { top: 12 },
                     suggestOnTriggerCharacters: true,
                   }}
+                  onMount={(editor) => {
+                    monacoEditorRef.current = editor;
+                    // Detect large pastes in the editor
+                    editor.onDidChangeModelContent((e: any) => {
+                      for (const change of e.changes) {
+                        const lines = change.text.split("\n").length;
+                        if (lines > 3 || change.text.length > 120) {
+                          pasteCountRef.current++;
+                          setCheatWarning(true);
+                        }
+                      }
+                    });
+                  }}
                 />
               </div>
             </div>
@@ -923,9 +1019,21 @@ export default function MockPage() {
                       exit {codeOutput.exit_code}
                     </span>
                   </div>
-                  <button onClick={() => setCodeOutput(null)} className="text-white/25 hover:text-white/50 text-xs transition-colors">
-                    <X size={12} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {pendingCodeSend && stage === "active" && (
+                      <button
+                        onClick={() => { sendMessage(pendingCodeSend!); setPendingCodeSend(null); }}
+                        disabled={streaming}
+                        className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg transition-all disabled:opacity-40"
+                        style={{ background: "rgba(139,92,246,0.2)", border: "1px solid rgba(139,92,246,0.35)", color: "#c4b5fd" }}
+                      >
+                        <Send size={9} /> Ask Interviewer
+                      </button>
+                    )}
+                    <button onClick={() => { setCodeOutput(null); setPendingCodeSend(null); }} className="text-white/25 hover:text-white/50 text-xs transition-colors">
+                      <X size={12} />
+                    </button>
+                  </div>
                 </div>
                 {codeOutput.stdout && (
                   <pre
@@ -983,6 +1091,23 @@ export default function MockPage() {
           <div className="text-white/50 text-sm mb-2">{company} · {role} · {selectedTypeConfig.label} · {selectedDiffConfig.label}</div>
           <div className="text-5xl font-black mt-3" style={{ color: verdictConfig.color }}>{overall_score}<span className="text-2xl text-white/30">/100</span></div>
         </motion.div>
+
+        {/* Recording download */}
+        {recordingBlobUrl && (
+          <div className="glass-card p-4 flex items-center gap-3" style={{ border: "1px solid rgba(74,222,128,0.2)" }}>
+            <Video size={14} className="text-green-400 flex-shrink-0" />
+            <span className="text-white/60 text-sm flex-1">Interview recording ready</span>
+            <button onClick={downloadRecording}
+              className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all"
+              style={{ background: "rgba(74,222,128,0.15)", border: "1px solid rgba(74,222,128,0.3)", color: "#4ade80" }}>
+              <Download size={12} /> Download
+            </button>
+            <button onClick={deleteRecording} className="w-7 h-7 rounded-lg flex items-center justify-center text-red-400/50 hover:text-red-400 transition-colors flex-shrink-0"
+              style={{ background: "rgba(248,113,113,0.05)", border: "1px solid rgba(248,113,113,0.1)" }}>
+              <X size={12} />
+            </button>
+          </div>
+        )}
 
         {/* Score cards */}
         <div className="grid grid-cols-5 gap-2">

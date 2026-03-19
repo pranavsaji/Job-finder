@@ -1,23 +1,28 @@
 import httpx
-from typing import Optional
 
-PISTON_URL = "https://emkc.org/api/v2/piston"
+WANDBOX_URL = "https://wandbox.org/api/compile.json"
 
-LANGUAGE_MAP = {
-    "javascript": ("node", "18.15.0"),
-    "typescript": ("typescript", "5.0.3"),
-    "python": ("python", "3.10.0"),
-    "java": ("java", "15.0.2"),
-    "cpp": ("c++", "10.2.0"),
-    "go": ("go", "1.16.2"),
-    "rust": ("rust", "1.50.0"),
+# Wandbox compiler names
+COMPILER_MAP = {
+    "python":     "cpython-3.12.0",
+    "javascript": "nodejs-20.11.0",
+    "typescript": "typescript-5.4.5",
+    "java":       "openjdk-head",
+    "cpp":        "gcc-head",
+    "go":         "go-head",
+    "rust":       "rust-head",
+}
+
+# Wandbox compiler options per language
+COMPILER_OPTIONS = {
+    "cpp": "c++17,warning",
 }
 
 
 async def execute_code(language: str, code: str, stdin: str = "") -> dict:
-    """Execute code via Piston API. Returns {stdout, stderr, exit_code, error}"""
-    lang_info = LANGUAGE_MAP.get(language)
-    if not lang_info:
+    """Execute code via Wandbox API (free, no auth required)."""
+    compiler = COMPILER_MAP.get(language)
+    if not compiler:
         return {
             "stdout": "",
             "stderr": f"Unsupported language: {language}",
@@ -25,32 +30,34 @@ async def execute_code(language: str, code: str, stdin: str = "") -> dict:
             "error": None,
         }
 
-    lang_name, lang_version = lang_info
-    payload = {
-        "language": lang_name,
-        "version": lang_version,
-        "files": [{"name": f"main.{language}", "content": code}],
+    payload: dict = {
+        "compiler": compiler,
+        "code": code,
         "stdin": stdin,
-        "run_timeout": 5000,    # 5 second timeout
-        "compile_timeout": 10000,
     }
+    if language in COMPILER_OPTIONS:
+        payload["options"] = COMPILER_OPTIONS[language]
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=20.0) as client:
         try:
-            r = await client.post(f"{PISTON_URL}/execute", json=payload)
+            r = await client.post(WANDBOX_URL, json=payload)
             r.raise_for_status()
             data = r.json()
-            run = data.get("run", {})
+
+            stdout = (data.get("program_output") or "") + (data.get("program_message") or "")
+            stderr = (data.get("compiler_error") or "") + (data.get("program_error") or "")
+            status = str(data.get("status", "0"))
+
             return {
-                "stdout": run.get("stdout", "")[:2000],  # cap output
-                "stderr": run.get("stderr", "")[:1000],
-                "exit_code": run.get("code", 0),
+                "stdout": stdout[:2000],
+                "stderr": stderr[:1000],
+                "exit_code": 0 if status == "0" else 1,
                 "error": None,
             }
         except httpx.TimeoutException:
             return {
                 "stdout": "",
-                "stderr": "Execution timed out (5s limit)",
+                "stderr": "Execution timed out (20s limit)",
                 "exit_code": 1,
                 "error": "timeout",
             }
