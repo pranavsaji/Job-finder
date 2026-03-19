@@ -21,17 +21,32 @@ def _preset_to_timelimit(date_preset):
     return mapping.get(date_preset or "", None)
 
 
+_NON_ENGLISH_RE = re.compile(
+    r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff\u0900-\u097f]"
+)
+_JUNK_DOMAINS = re.compile(
+    r"(pinterest\.|flickr\.|instagram\.|aliexpress\.|taobao\.|baidu\.|zhihu\.|csdn\.net|"
+    r"gettyimages\.|shutterstock\.|istockphoto\.|alamy\.)",
+    re.IGNORECASE,
+)
+
+
 def _ddgs_search(query: str, max_results: int = 10, timelimit=None, _retry: int = 2) -> list:
     for attempt in range(_retry):
         try:
             from ddgs import DDGS
-            kwargs = {"max_results": max_results}
+            kwargs = {"max_results": max_results + 5, "region": "us-en"}
             if timelimit:
                 kwargs["timelimit"] = timelimit
             ddgs = DDGS(timeout=15)
-            results = list(ddgs.text(query, **kwargs))
-            if results:
-                return results
+            raw = list(ddgs.text(query, **kwargs))
+            # Filter out non-English and junk results
+            results = [r for r in raw
+                       if not _NON_ENGLISH_RE.search(r.get("title", "") + r.get("body", "")[:80])
+                       and not _JUNK_DOMAINS.search(r.get("href", ""))]
+            out = results[:max_results] if results else raw[:max_results]
+            if out:
+                return out
         except Exception as e:
             print(f"DDG search error (attempt {attempt+1}) for '{query[:60]}': {e}")
             if attempt < _retry - 1:
@@ -162,20 +177,37 @@ async def scrape_jobboard_jobs(
     limit_per_platform: int = 10,
     date_preset=None,
 ) -> list:
-    timelimit = _preset_to_timelimit(date_preset)
+    # Don't pass DDG timelimit — unreliable for ATS boards. Post-filter by date_from instead.
     per_query = max(10, limit_per_platform + 4)
 
     # Step 1: DDG discovery — finds role-relevant URLs across all ATS boards
     ddg_jobs = await asyncio.get_event_loop().run_in_executor(
-        None, _ddg_discover_boards, roles[:3], country, timelimit, per_query
+        None, _ddg_discover_boards, roles[:3], country, None, per_query
     )
 
     # Step 2: Enrich with real posting dates via ATS public APIs
     enriched = await _enrich_ddg_jobs(ddg_jobs)
 
-    # Filter by date if requested
+    # Filter by date if requested (normalize timezones before compare)
     if date_from:
-        enriched = [j for j in enriched if not j.get("posted_at") or j["posted_at"] >= date_from]
+        df = date_from if date_from.tzinfo else date_from.replace(tzinfo=timezone.utc)
+        keep = []
+        for j in enriched:
+            pd = j.get("posted_at")
+            if not pd:
+                keep.append(j)  # keep unknowns
+                continue
+            if isinstance(pd, str):
+                try:
+                    pd = datetime.fromisoformat(pd)
+                except Exception:
+                    keep.append(j)
+                    continue
+            if pd.tzinfo is None:
+                pd = pd.replace(tzinfo=timezone.utc)
+            if pd >= df:
+                keep.append(j)
+        enriched = keep
 
     # Deduplicate
     seen = set()

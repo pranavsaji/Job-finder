@@ -256,28 +256,61 @@ export default function MockPage() {
     }
   }, [code]);
 
-  // Anti-cheat listeners (coding round only)
+  // Tab-switch tracker (all rounds) + anti-cheat paste (coding only) + fullscreen re-entry
   useEffect(() => {
-    if (stage !== "active" || (selectedType !== "coding" && selectedType !== "technical_screen")) return;
-    const onBlur = () => { tabSwitchRef.current++; if (tabSwitchRef.current > 1) setCheatWarning(true); };
+    if (stage !== "active") return;
+    const isCodeRound = selectedType === "coding" || selectedType === "technical_screen";
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        // Tab hidden — count but do NOT stop the interview
+        tabSwitchRef.current++;
+        if (isCodeRound && tabSwitchRef.current > 1) setCheatWarning(true);
+      } else {
+        // Tab came back — re-enter fullscreen immediately
+        enterFullscreen();
+        if (tabSwitchRef.current > 0) toast(`Tab switch detected (${tabSwitchRef.current}x)`, { icon: "⚠️", duration: 2000 });
+      }
+    };
     const onPaste = (e: ClipboardEvent) => {
+      if (!isCodeRound) return;
       const text = e.clipboardData?.getData("text") || "";
       if (text.length > 40) { pasteCountRef.current++; setCheatWarning(true); }
     };
-    document.addEventListener("visibilitychange", onBlur);
+    document.addEventListener("visibilitychange", onVisibility);
     document.addEventListener("paste", onPaste);
-    return () => { document.removeEventListener("visibilitychange", onBlur); document.removeEventListener("paste", onPaste); };
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("paste", onPaste);
+    };
   }, [stage, selectedType]);
+
+  // Force camera + mic — used at interview start; throws if denied
+  async function requestMediaPermissions(): Promise<MediaStream> {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+      return stream;
+    } catch (err: any) {
+      const msg = err?.name === "NotAllowedError"
+        ? "Camera & microphone access is required for mock interviews. Please allow access in your browser and try again."
+        : `Media error: ${err?.message || err}`;
+      toast.error(msg, { duration: 6000 });
+      throw err;
+    }
+  }
 
   // Webcam
   async function startVideo() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await requestMediaPermissions();
       streamRef.current = stream;
       if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
       setVideoOn(true);
       startRecording(stream);
-    } catch { toast.error("Camera access denied"); }
+    } catch { /* already toasted */ }
   }
 
   function stopVideo() {
@@ -396,9 +429,36 @@ export default function MockPage() {
 
   // ── Start session ──────────────────────────────────────────────────────
 
+  // Fullscreen helpers
+  function enterFullscreen() {
+    const el = document.documentElement;
+    try {
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if ((el as any).webkitRequestFullscreen) (el as any).webkitRequestFullscreen();
+    } catch { /* ignore — may fail in some contexts */ }
+  }
+  function exitFullscreen() {
+    try {
+      if (document.exitFullscreen) document.exitFullscreen();
+      else if ((document as any).webkitExitFullscreen) (document as any).webkitExitFullscreen();
+    } catch { /* ignore */ }
+  }
+
   async function startInterview() {
     if (!company.trim()) return toast.error("Enter company name");
     if (!role.trim()) return toast.error("Enter role");
+
+    // Request camera + mic BEFORE starting — block if denied
+    let stream: MediaStream;
+    try {
+      stream = await requestMediaPermissions();
+    } catch {
+      return; // already toasted
+    }
+
+    // Enter fullscreen
+    enterFullscreen();
+
     setStage("researching");
     try {
       const r = await mockApi.start({
@@ -417,6 +477,11 @@ export default function MockPage() {
       // Restore any auto-saved code for this session
       const saved = localStorage.getItem(`mock_code_${sid}`);
       if (saved) setCode(saved);
+      // Attach pre-granted media stream
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
+      setVideoOn(true);
+      startRecording(stream);
       setStage("active");
       setTimeout(() => { speakText(r.data.opening); }, 300);
     } catch (e: any) {
@@ -468,6 +533,7 @@ export default function MockPage() {
   async function finishAndEvaluate() {
     if (!sessionId) return;
     window.speechSynthesis?.cancel(); stopListening(); stopRecording();
+    exitFullscreen();
     setStage("evaluating");
     const totalSecs = (Date.now() - startTimeRef.current) / 1000;
     const avgConf = confidenceScoresRef.current.length
@@ -488,6 +554,7 @@ export default function MockPage() {
   }
 
   function resetAll() {
+    exitFullscreen();
     setStage("setup"); setMessages([]); setSessionId(null); setInput(""); setElapsed(0);
     setEvaluation(null); setInterviewComplete(false); setCheatWarning(false); setCode("// Write your solution here\n");
     fillerCountRef.current = 0; confidenceScoresRef.current = []; wordCountRef.current = 0;

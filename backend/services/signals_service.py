@@ -9,14 +9,48 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 
+_NON_ENGLISH_RE = re.compile(
+    r"[\u4e00-\u9fff"   # Chinese
+    r"\u3040-\u309f"   # Hiragana
+    r"\u30a0-\u30ff"   # Katakana
+    r"\uac00-\ud7af"   # Korean
+    r"\u0600-\u06ff"   # Arabic
+    r"\u0400-\u04ff"   # Cyrillic
+    r"\u0900-\u097f]", # Devanagari
+)
+
+_JUNK_DOMAINS = re.compile(
+    r"(pinterest\.|flickr\.|instagram\.|aliexpress\.|taobao\.|baidu\.|"
+    r"zhihu\.|weibo\.|qq\.com|163\.com|tianya\.|csdn\.net|"
+    r"gettyimages\.|shutterstock\.|istockphoto\.|alamy\.)",
+    re.IGNORECASE,
+)
+
+
+def _is_english_result(r: dict) -> bool:
+    """Return False for non-English titles, garbage image sites, etc."""
+    title = r.get("title", "")
+    url = r.get("href", "")
+    body = r.get("body", "")
+    if _NON_ENGLISH_RE.search(title) or _NON_ENGLISH_RE.search(body[:100]):
+        return False
+    if _JUNK_DOMAINS.search(url):
+        return False
+    return True
+
+
 def _ddgs_search(query: str, max_results: int = 5, _retry: int = 2) -> list:
     for attempt in range(_retry):
         try:
             from ddgs import DDGS
+            # region="us-en" biases toward English results
             ddgs = DDGS(timeout=15)
-            results = list(ddgs.text(query, max_results=max_results))
+            results = list(ddgs.text(query, max_results=max_results + 4, region="us-en"))
+            filtered = [r for r in results if _is_english_result(r)]
+            if filtered:
+                return filtered[:max_results]
             if results:
-                return results
+                return results[:max_results]  # fallback: return unfiltered if all filtered out
         except Exception as e:
             print(f"DDG search error (attempt {attempt+1}) for '{query[:60]}': {e}")
             if attempt < _retry - 1:
@@ -87,8 +121,8 @@ async def scan_signals_for_roles(roles: list, companies: Optional[list] = None) 
             (f'site:wellfound.com/company "{role}"', "job_opening", role),
             # Ashby ATS
             (f'site:jobs.ashbyhq.com "{role}"', "job_opening", role),
-            # LinkedIn jobs (title extraction)
-            (f'site:linkedin.com/jobs "{role}" hiring 2025 OR 2026', "job_opening", role),
+            # LinkedIn jobs (title extraction) — explicit English/US scope
+            (f'site:linkedin.com/jobs "{role}" hiring (2025 OR 2026) -lang:zh -lang:ja', "job_opening", role),
             # HN Who's Hiring — company names in posts
             (f'site:news.ycombinator.com "who is hiring" "{role}" 2025 OR 2026', "hiring_signal", role),
         ]

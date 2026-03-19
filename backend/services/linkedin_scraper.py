@@ -13,18 +13,31 @@ from typing import Optional
 from urllib.parse import quote_plus
 
 
+_NON_ENGLISH_RE = re.compile(
+    r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u0600-\u06ff\u0400-\u04ff\u0900-\u097f]"
+)
+_JUNK_DOMAINS = re.compile(
+    r"(pinterest\.|flickr\.|aliexpress\.|taobao\.|baidu\.|zhihu\.|csdn\.net|gettyimages\.)",
+    re.IGNORECASE,
+)
+
+
 def _ddgs_search(query: str, max_results: int = 10, timelimit: Optional[str] = None, _retry: int = 2) -> list:
-    """Thread-safe DuckDuckGo search with retry on connection failure."""
+    """Thread-safe DuckDuckGo search with retry and English-only filter."""
     for attempt in range(_retry):
         try:
             from ddgs import DDGS
-            kwargs = {"max_results": max_results}
+            kwargs = {"max_results": max_results + 5, "region": "us-en"}
             if timelimit:
                 kwargs["timelimit"] = timelimit
             ddgs = DDGS(timeout=15)
-            results = list(ddgs.text(query, **kwargs))
-            if results:
-                return results
+            raw = list(ddgs.text(query, **kwargs))
+            results = [r for r in raw
+                       if not _NON_ENGLISH_RE.search(r.get("title", "") + r.get("body", "")[:80])
+                       and not _JUNK_DOMAINS.search(r.get("href", ""))]
+            out = results[:max_results] if results else raw[:max_results]
+            if out:
+                return out
         except Exception as e:
             print(f"DDG search error (attempt {attempt+1}) for '{query[:60]}': {e}")
             if attempt < _retry - 1:

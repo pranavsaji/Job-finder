@@ -1,46 +1,41 @@
 # Job Info Finder — Claude Context
 
 ## Purpose
-Full-stack job hunting platform: scrapes jobs across 9+ platforms, enriches with ATS APIs, and uses Claude AI for outreach drafting, resume tailoring, interview prep, mock interviews, application pipeline CRM, and salary intelligence.
+Full-stack job hunting platform: scrapes jobs across 9+ platforms, enriches with ATS APIs, and uses Claude AI for outreach drafting, resume tailoring, mock interviews, pipeline CRM, and salary intelligence.
 
 ## Stack
 - **Backend:** Python 3, FastAPI, SQLAlchemy (SQLite dev / PostgreSQL prod via `DATABASE_URL`)
 - **Frontend:** Next.js 15, React 18, TypeScript, Tailwind CSS, Framer Motion
-- **AI:** Anthropic Claude (sonnet-4-6 for main tasks, haiku-4-5 for fast scoring/salary)
-- **Scraping:** DuckDuckGo (`ddgs`), Playwright (LinkedIn auth), httpx + BeautifulSoup
-- **Scheduler:** APScheduler `AsyncIOScheduler` — hourly alerts + daily follow-up reminders
-- **Code Execution:** Wandbox API (`wandbox.org/api/compile.json`) for mock interview coding rounds (free, no auth)
+- **AI:** Anthropic Claude (sonnet-4-6 main, haiku-4-5 scoring/salary)
+- **Scraping:** DuckDuckGo (`ddgs` with `region="us-en"` + English/junk filters), Playwright (LinkedIn auth), httpx
+- **Scheduler:** APScheduler `AsyncIOScheduler` — 30-min alert tick + daily 08:00 follow-up reminders
+- **Code Execution:** Wandbox API (free, no auth) for mock interview coding rounds
 - **Auth:** JWT (python-jose), bcrypt, Fernet encryption for LinkedIn creds
 - **Deploy:** Railway (backend) + Vercel (frontend)
 
 ## File Map
 | Path | Purpose |
 |---|---|
-| `backend/main.py` | FastAPI app, CORS, all router registration, `_migrate_db()`, `_seed_admin()` |
+| `backend/main.py` | FastAPI app, CORS, router registration, `_migrate_db()`, `_seed_admin()` |
+| `backend/services/scraper.py` | Platform orchestrator; 45s per-platform timeout; LLM post-filter for post platforms |
+| `backend/services/wellfound_scraper.py` | DDG scraper with strict URL validation (rejects landing pages, only `/company/*/jobs/*`) |
+| `backend/services/jobboards_scraper.py` | DDG discovery + Greenhouse/Lever API date enrichment; timezone-safe date filter |
+| `backend/services/signals_service.py` | Company signals: GitHub, funding, exec hires, product launches; English-only DDG |
+| `backend/services/alert_scheduler.py` | Per-alert `email_interval_hours` + `last_emailed_at`; roles×countries cross-join |
+| `backend/services/claude_service.py` | Resume tailor, ATS DOCX, critique streaming (`AsyncAnthropic`), cover letter (3 tones) |
 | `backend/services/match_service.py` | Claude Haiku job↔resume match scoring (0-100) |
-| `backend/services/code_runner.py` | Wandbox API async code execution, 7 languages, 5s timeout |
-| `backend/services/mock_interview_service.py` | Research agent, 9 interview types × 4 difficulties, evaluation engine |
-| `backend/services/alert_scheduler.py` | Hourly alert cron + daily 08:00 follow-up reminder emails |
-| `backend/services/claude_service.py` | Resume tailor, ATS DOCX, outreach drafts, cover letter (3 tones), LinkedIn optimizer, critique streaming |
-| `backend/models/pipeline.py` | `PipelineEntry` — CRM stages, history, contacts JSON, offer fields |
-| `backend/models/resume_version.py` | `ResumeVersion` — resume snapshots on every upload |
-| `backend/models/contact.py` | `Contact` — referral tracker (discovered/messaged/replied/referred/pass) |
-| `backend/models/mock_session.py` | `MockSession` — messages, evaluation, cheat_flags, research_context |
-| `backend/routers/pipeline.py` | `/pipeline` CRUD, stage transitions with history, contacts add/remove |
-| `backend/routers/dashboard.py` | `GET /dashboard/summary` — jobs, follow-ups, pipeline counts, mock avg, top matches |
-| `backend/routers/salary.py` | `GET /salary/intelligence` (from scraped jobs) + `POST /salary/research` (DDG+Claude) |
-| `backend/routers/reminders.py` | `GET /reminders/due`, `PUT /reminders/{job_id}` (set follow_up_at) |
-| `backend/routers/contacts.py` | `/contacts` CRUD + `POST /contacts/from-network` bulk import |
-| `backend/routers/mock_interview.py` | `/mock/start`, `/mock/chat` (SSE), `/mock/evaluate`, `/mock/execute`, `/mock/analytics` |
-| `backend/routers/resume.py` | Upload + tailor + ATS DOCX + `/resume/versions` + `/resume/linkedin-optimize` + `/resume/critique` (SSE) |
-| `backend/routers/drafts.py` | Outreach drafts + `POST /drafts/cover-letter` |
-| `frontend/app/pipeline/page.tsx` | Kanban CRM: 7 stages, slide-in detail panel, stage history, contacts |
-| `frontend/app/salary/page.tsx` | Salary research form + intelligence table from scraped job data |
-| `frontend/app/contacts/page.tsx` | Referral tracker: status tabs, search, inline edit |
-| `frontend/app/mock/page.tsx` | Mock interview: voice/video/code, Run▶ code execution, History+Analytics overlay |
-| `frontend/app/resume/page.tsx` | 5-tab resume: ATS Audit / Recruiter Critique / Versions / LinkedIn Optimizer / Cover Letter |
-| `frontend/app/page.tsx` | Dashboard: 6 stat cards, pipeline bar, top matches, follow-ups alert, quick actions |
-| `frontend/components/DraftPanel.tsx` | Side panel: info, outreach drafts, resume analysis + PDF generation |
+| `backend/services/mock_interview_service.py` | Research agent, 9 types × 4 difficulties, evaluation engine |
+| `backend/routers/jobs.py` | `/jobs/scrape/sync`: computes `effective_date_from` from `date_preset`; never returns 500 |
+| `backend/routers/signals.py` | `/signals/company` + `/signals/scan`; accepts `country` filter |
+| `backend/routers/resume.py` | `/resume/critique` SSE stream; full resume, no truncation |
+| `backend/routers/alerts.py` | Alert CRUD; manual check triggers email; multi-country support |
+| `backend/models/pipeline.py` | `PipelineEntry` — CRM stages, history JSON, contacts JSON, offer fields |
+| `frontend/app/jobs/page.tsx` | Jobs list: 3 categories (posts/listings/funded), date pills, scrape panel |
+| `frontend/app/mock/page.tsx` | Mock interview: force fullscreen + camera/mic on start; tab-switch warns not stops |
+| `frontend/app/alerts/page.tsx` | Per-alert email interval (1h–24h), multi-country tags, countdown to next email |
+| `frontend/app/resume/page.tsx` | 5 tabs: ATS Audit / Recruiter Critique (SSE) / Versions / LinkedIn / Cover Letter |
+| `frontend/app/signals/page.tsx` | Company signals + broad role scan; country filter |
+| `frontend/components/DraftPanel.tsx` | Slide-in: job info, outreach drafts, resume analysis + PDF |
 
 ## Environment Variables
 ```
@@ -65,36 +60,20 @@ cd frontend && npm run dev                       # frontend (http://localhost:30
 ```
 
 ## Key Design Decisions
-- **Job match scoring:** Claude Haiku scores resume↔job 0-100; stored as `jobs.match_score`; auto-scored after scrape; displayed as green/amber/red badge
-- **Pipeline CRM:** `PipelineEntry` stores stage history as JSON array `[{stage, ts, note}]`; contacts stored as JSON array; offer fields shown only when stage="offer"
-- **Resume versions:** every upload auto-saves to `ResumeVersion`; restore sets `user.resume_text`; `create_tables()` must import model
-- **Cover letter tones:** professional / conversational / bold — maps to Claude instruction modifier
-- **Follow-up reminders:** `jobs.follow_up_at` datetime; scheduler checks daily at 08:00; also surfaces in `/dashboard/summary` as `followups_due`
-- **Code execution:** Wandbox API (free, no auth); 5s run timeout; stdout/stderr capped at 2000/1000 chars; shown below Monaco editor
-- **Mock analytics:** `GET /mock/analytics` aggregates completed sessions; returns `trends`, `avg_by_type`, `pass_rate`; rendered as SVG line chart + bar chart
-- **Salary parsing:** regex extracts min/max from raw strings (handles "120k-180k", "$120,000"); formatted as "$120K" in UI
-- **Job user isolation:** all queries scoped to `current_user.id`; dedup per-user (post_url + user_id)
-- **Mock interview:** research_context stored in session; chat capped 30 messages; evaluate idempotent; `[INTERVIEW_COMPLETE]` auto-triggers eval
-- **Registration closed:** `POST /auth/register` returns 403; users added via admin panel only
-- **SSE streaming:** newlines escaped `\\n` backend → unescaped frontend; `[DONE:True/False]` signals completion
+- **Scraping resilience:** 3 layers — endpoint catch-all, 45s per-platform timeout, DDG 2x retry. Never returns 500.
+- **Date filtering:** Router computes `effective_date_from` from `date_preset` ("7d" → now-7d) so all scraper post-filters run. DDG timelimit NOT used (unreliable); post-filter by `posted_at` instead. Unknowns (no date) are kept.
+- **Wellfound URL guard:** `_is_real_wellfound_job()` rejects homepage/landing pages; only accepts `/company/*/jobs/*`, `/l/jobs/*`, `/jobs/<slug>` patterns.
+- **English-only scraping:** `region="us-en"` + `_NON_ENGLISH_RE` (CJK/Arabic/Cyrillic) + `_JUNK_DOMAINS` (Pinterest, Baidu, etc.) on all DDG scrapers.
+- **Signals country filter:** `country` param threads through router → `scan_signals_for_roles` → DDG queries.
+- **Per-alert scheduling:** Each alert stores `email_interval_hours` + `last_emailed_at`; scheduler ticks every 30min; roles × countries cross-join for search queries.
+- **Resume critique SSE:** `StreamingResponse` + `AsyncAnthropic.messages.stream()`; newlines escaped `\\n`→unescaped; JSON parsed on `[DONE]` sentinel. Full resume, no truncation.
+- **Mock interview:** Camera/mic forced before API call (`requestMediaPermissions()`); auto-fullscreen on start; tab switch warns + re-enters fullscreen (does NOT stop interview).
+- **Job user isolation:** All queries scoped to `current_user.id`; dedup per-user (post_url + user_id).
+- **Registration closed:** `POST /auth/register` returns 403; users added via admin panel only.
 
 ## Deploy
 - **Backend:** Railway auto-deploys on push to `main`
 - **Frontend:** Vercel auto-deploys; set `NEXT_PUBLIC_API_URL` to Railway backend URL
 
-## Bug Fixes Applied
-- `GET /jobs 500`: Added missing DB migrations for `jobs.matched_role`, `jobs.salary_range`, `users.scraping_preferences`, `users.resume_filename`, `users.hunter_api_key`, `users.target_roles`
-- `pipeline/page.tsx`: Fixed `res.data.entries` (was `res.data`) — crash on `.filter()` since API returns `{entries: [...]}`
-- `pipeline/page.tsx`: Fixed stage history key `h.ts` (was `h.timestamp`) — "Invalid Date" in UI
-- `pipeline.py stats`: Fixed `db.func.count` → `func.count` (from sqlalchemy import)
-
-## Resume Critic (Enhanced)
-- **Recruiter persona**: Jordan Mills, 15yr field recruiter, 80k+ resumes, 1000+/week
-- **Streaming architecture**: `/resume/critique` returns SSE (`StreamingResponse`); service uses `AsyncAnthropic` + `async with client.messages.stream()`; full resume sent with NO truncation; frontend buffers chunks via `fetch` + `ReadableStream`, unescapes `\\n`, parses JSON on `[DONE]` signal — eliminates 60s Railway timeout
-- **Shared prompts**: `_build_critique_prompts()` in `claude_service.py` used by both streaming and sync paths
-- **Critique fields**: `experience_verdict` (level match, credibility), `narrative_analysis` (trajectory, career story score), `market_benchmarks` (vs peers, interview probability, differentiator/liability), `rebuild_directives` (summary instruction, bullet formula, skills restructure, critical_additions/removals)
-- **Build from critique**: Uses rebuild_directives + market context for higher-quality rebuild; returns DOCX
-- **Frontend**: SSE fetch in `handleCritique()`; UI sections for experience verdict, career narrative, market position, rebuild blueprint
-
 ## Last Updated
-2026-03-18 (resume critique streaming)
+2026-03-19 (wellfound URL guard, date_from from preset, English-only scraping, signals country filter, mock interview fullscreen+camera)
