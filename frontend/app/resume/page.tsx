@@ -525,7 +525,7 @@ function VersionsTab() {
   async function loadVersions() {
     try {
       const res = await resumeVersionsApi.list();
-      setVersions(res.data || []);
+      setVersions(res.data.versions || []);
     } catch {
       toast.error("Failed to load versions");
     } finally {
