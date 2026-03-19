@@ -105,7 +105,10 @@ async def _process_alert(user: User, alert: dict):
     platforms = alert.get("platforms") or None
     date_preset = alert.get("date_preset", "24h")
     email_interval_hours = int(alert.get("email_interval_hours", 24))
-    country = alert.get("country") or None
+    countries = alert.get("countries") or []
+    # backward compat: old alerts may have a single "country" field
+    if not countries and alert.get("country"):
+        countries = [alert["country"]]
 
     if not roles:
         return
@@ -126,10 +129,11 @@ async def _process_alert(user: User, alert: dict):
         except Exception:
             pass  # If parsing fails, proceed
 
-    # Append country to each role so the scraper includes it in the query
-    search_roles = roles
-    if country:
-        search_roles = [f"{r} {country}" for r in roles]
+    # Cross-join roles × countries so each combination is searched
+    if countries:
+        search_roles = [f"{r} {c}" for r in roles for c in countries]
+    else:
+        search_roles = roles
 
     # Auto-clean stale new jobs for this user before saving fresh results
     from backend.routers.jobs import _auto_clean
@@ -140,8 +144,8 @@ async def _process_alert(user: User, alert: dict):
         db.close()
 
     log.info(
-        "Running alert %s for user %s (%s) — roles=%s country=%s interval=%dh",
-        alert_id, user.id, user.email, roles, country, email_interval_hours,
+        "Running alert %s for user %s (%s) — roles=%s countries=%s interval=%dh",
+        alert_id, user.id, user.email, roles, countries, email_interval_hours,
     )
 
     try:
@@ -178,7 +182,7 @@ async def _process_alert(user: User, alert: dict):
             alert_label=alert.get("label", ", ".join(roles[:2])),
             roles=roles,
             jobs=serialized,
-            country=country,
+            countries=countries,
             email_interval_hours=email_interval_hours,
         )
         _update_last_emailed(user, alert_id)
@@ -416,7 +420,7 @@ def _send_alert_email(
     alert_label: str,
     roles: List[str],
     jobs: List[dict],
-    country: Optional[str] = None,
+    countries: Optional[List[str]] = None,
     email_interval_hours: int = 24,
 ):
     if not _smtp_configured():
@@ -468,7 +472,8 @@ def _send_alert_email(
             f"    {url}\n"
         )
 
-    country_line = f" · <strong>{country}</strong>" if country else ""
+    country_str = " / ".join(countries) if countries else ""
+    country_line = f" · <strong>{country_str}</strong>" if country_str else ""
     interval_badge = (
         f'<span style="background:#1e1b4b;color:#a78bfa;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600">'
         f'Every {email_interval_hours}h</span>'
@@ -509,7 +514,7 @@ def _send_alert_email(
 
     text_body = (
         f"Job Alert: {alert_label}"
-        f"{' | ' + country if country else ''} | {interval_label.title()}\n"
+        f"{' | ' + country_str if country_str else ''} | {interval_label.title()}\n"
         f"{datetime.datetime.utcnow().strftime('%b %d, %Y %H:%M UTC')}\n\n"
         f"{len(jobs)} job{'s' if len(jobs) != 1 else ''} found:\n\n"
         f"{job_rows_txt}\n"

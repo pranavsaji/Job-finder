@@ -22,7 +22,7 @@ interface Alert {
   last_emailed_at: string | null;
   last_count: number;
   email_interval_hours: number;
-  country: string | null;
+  countries: string[] | null;
 }
 
 interface JobResult {
@@ -93,7 +93,8 @@ export default function AlertsPage() {
   const [newPreset, setNewPreset] = useState("24h");
   const [newPlatforms, setNewPlatforms] = useState<string[]>([]);
   const [newIntervalHours, setNewIntervalHours] = useState(24);
-  const [newCountry, setNewCountry] = useState("");
+  const [newCountries, setNewCountries] = useState<string[]>([]);
+  const [countryInput, setCountryInput] = useState("");
   const [showCountrySuggestions, setShowCountrySuggestions] = useState(false);
 
   const ALL_PLATFORMS = ["linkedin", "twitter", "reddit", "hn", "remoteok", "yc", "wellfound", "jobboards", "newsletter"];
@@ -125,7 +126,7 @@ export default function AlertsPage() {
         date_preset: newPreset,
         label: newLabel.trim() || undefined,
         email_interval_hours: newIntervalHours,
-        country: newCountry.trim() || undefined,
+        countries: newCountries.length > 0 ? newCountries : undefined,
       }, { headers });
       setAlerts((prev) => [...prev, r.data]);
       setShowCreate(false);
@@ -133,7 +134,8 @@ export default function AlertsPage() {
       setNewLabel("");
       setNewPlatforms([]);
       setNewIntervalHours(24);
-      setNewCountry("");
+      setNewCountries([]);
+      setCountryInput("");
       toast.success("Alert created");
     } catch {
       toast.error("Failed to create alert");
@@ -172,10 +174,6 @@ export default function AlertsPage() {
   function togglePlatform(p: string) {
     setNewPlatforms((prev) => prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]);
   }
-
-  const filteredCountries = POPULAR_COUNTRIES.filter(c =>
-    newCountry && c.toLowerCase().includes(newCountry.toLowerCase()) && c !== newCountry
-  );
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -216,36 +214,68 @@ export default function AlertsPage() {
               <p className="text-white/25 text-xs mt-1">Comma-separated</p>
             </div>
 
-            {/* Country filter */}
+            {/* Country filter — multi-select */}
             <div className="relative">
               <label className="text-white/50 text-xs mb-1.5 flex items-center gap-1.5 block">
-                <Globe size={11} /> Country / Location (optional)
+                <Globe size={11} /> Countries / Locations (optional, multi-select)
               </label>
+              {/* Selected countries */}
+              {newCountries.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {newCountries.map((c) => (
+                    <span key={c} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg"
+                      style={{ background: "rgba(96,165,250,0.15)", border: "1px solid rgba(96,165,250,0.3)", color: "#93c5fd" }}>
+                      <MapPin size={9} /> {c}
+                      <button onClick={() => setNewCountries(prev => prev.filter(x => x !== c))}
+                        className="ml-0.5 text-blue-300/60 hover:text-blue-300">
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <input
-                value={newCountry}
-                onChange={(e) => { setNewCountry(e.target.value); setShowCountrySuggestions(true); }}
+                value={countryInput}
+                onChange={(e) => { setCountryInput(e.target.value); setShowCountrySuggestions(true); }}
                 onBlur={() => setTimeout(() => setShowCountrySuggestions(false), 150)}
-                placeholder="e.g. United States, India, Remote"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && countryInput.trim()) {
+                    const val = countryInput.trim();
+                    if (!newCountries.includes(val)) setNewCountries(prev => [...prev, val]);
+                    setCountryInput("");
+                    setShowCountrySuggestions(false);
+                  }
+                }}
+                placeholder="Type or pick a country, press Enter to add…"
                 className="input-field"
               />
               {/* Quick select pills */}
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {POPULAR_COUNTRIES.map((c) => (
-                  <button key={c} onClick={() => { setNewCountry(c); setShowCountrySuggestions(false); }}
+                  <button key={c}
+                    onClick={() => {
+                      if (!newCountries.includes(c)) setNewCountries(prev => [...prev, c]);
+                      else setNewCountries(prev => prev.filter(x => x !== c));
+                    }}
                     className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${
-                      newCountry === c
+                      newCountries.includes(c)
                         ? "bg-blue-600/20 border-blue-500/40 text-blue-300"
                         : "border-white/8 text-white/30 hover:text-white/60"
                     }`}>
-                    {c}
+                    {newCountries.includes(c) ? "✓ " : ""}{c}
                   </button>
                 ))}
               </div>
-              {showCountrySuggestions && filteredCountries.length > 0 && (
+              {showCountrySuggestions && countryInput && (
                 <div className="absolute z-10 top-full left-0 right-0 mt-1 glass-card py-1 rounded-lg shadow-xl">
-                  {filteredCountries.map((c) => (
-                    <button key={c} onMouseDown={() => { setNewCountry(c); setShowCountrySuggestions(false); }}
-                      className="w-full text-left px-3 py-2 text-xs text-white/60 hover:text-white hover:bg-white/5">
+                  {POPULAR_COUNTRIES.filter(c =>
+                    c.toLowerCase().includes(countryInput.toLowerCase()) && !newCountries.includes(c)
+                  ).map((c) => (
+                    <button key={c} onMouseDown={() => {
+                      setNewCountries(prev => [...prev, c]);
+                      setCountryInput("");
+                      setShowCountrySuggestions(false);
+                    }} className="w-full text-left px-3 py-2 text-xs text-white/60 hover:text-white hover:bg-white/5">
                       {c}
                     </button>
                   ))}
@@ -346,13 +376,13 @@ export default function AlertsPage() {
                         style={{ background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.25)", color: "#6ee7b7" }}>
                         <Timer size={9} /> {intervalLabel}
                       </span>
-                      {/* Country badge */}
-                      {alert.country && (
-                        <span className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1"
+                      {/* Country badges */}
+                      {alert.countries && alert.countries.length > 0 && alert.countries.map((c) => (
+                        <span key={c} className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1"
                           style={{ background: "rgba(96,165,250,0.1)", border: "1px solid rgba(96,165,250,0.25)", color: "#93c5fd" }}>
-                          <MapPin size={9} /> {alert.country}
+                          <MapPin size={9} /> {c}
                         </span>
-                      )}
+                      ))}
                     </div>
 
                     <div className="flex flex-wrap gap-1 mb-2">

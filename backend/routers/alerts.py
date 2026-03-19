@@ -21,8 +21,8 @@ class AlertCreate(BaseModel):
     date_preset: str = "24h"
     label: Optional[str] = None
     webhook_url: Optional[str] = None
-    email_interval_hours: int = 24   # how often to email: 1, 2, 4, 6, 12, 24
-    country: Optional[str] = None    # e.g. "United States", "India", "Remote"
+    email_interval_hours: int = 24          # how often to email: 1, 2, 4, 6, 12, 24
+    countries: Optional[List[str]] = None  # e.g. ["United States", "India", "Remote"]
 
 
 @router.get("")
@@ -52,7 +52,7 @@ async def create_alert(
         "last_count": 0,
         "webhook_url": payload.webhook_url,
         "email_interval_hours": max(1, payload.email_interval_hours),
-        "country": payload.country or None,
+        "countries": [c for c in (payload.countries or []) if c.strip()] or None,
         "last_emailed_at": None,
     }
     alerts.append(new_alert)
@@ -83,34 +83,65 @@ async def check_alert(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Run a scrape for this alert and return matching jobs."""
+    """Run a scrape for this alert, send email, and return matching jobs."""
     prefs = dict(current_user.scraping_preferences or {})
     alerts = prefs.get("alerts", [])
     alert = next((a for a in alerts if a.get("id") == alert_id), None)
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
 
+    import datetime
     from backend.services.scraper import scrape_all
+
+    roles = alert["roles"]
+    countries = alert.get("countries") or []
+    # backward compat: old alerts may have single "country" field
+    if not countries and alert.get("country"):
+        countries = [alert["country"]]
+
+    # Cross-join roles × countries so each combo is searched
+    if countries:
+        search_roles = [f"{r} {c}" for r in roles for c in countries]
+    else:
+        search_roles = roles
+
     jobs = await scrape_all(
-        roles=alert["roles"],
+        roles=search_roles,
         platforms=alert.get("platforms"),
         date_preset=alert.get("date_preset", "24h"),
         limit_per_platform=15,
     )
 
-    # Update last_checked
-    import datetime
+    # Serialize posted_at
+    serialized = []
+    for j in jobs:
+        d = dict(j)
+        if isinstance(d.get("posted_at"), datetime.datetime):
+            d["posted_at"] = d["posted_at"].isoformat()
+        serialized.append(d)
+
+    # Update last_checked + last_emailed_at
+    now_iso = datetime.datetime.utcnow().isoformat()
     for a in alerts:
         if a.get("id") == alert_id:
-            a["last_checked"] = datetime.datetime.utcnow().isoformat()
-            a["last_count"] = len(jobs)
+            a["last_checked"] = now_iso
+            a["last_count"] = len(serialized)
+            a["last_emailed_at"] = now_iso
     prefs["alerts"] = alerts
     current_user.scraping_preferences = prefs
     db.commit()
 
-    # Serialize posted_at
-    for j in jobs:
-        if isinstance(j.get("posted_at"), __import__("datetime").datetime):
-            j["posted_at"] = j["posted_at"].isoformat()
+    # Always send email on manual check
+    if serialized:
+        from backend.services.alert_scheduler import _send_alert_email
+        _send_alert_email(
+            to_email=current_user.email,
+            to_name=current_user.name or "",
+            alert_label=alert.get("label", ", ".join(roles[:2])),
+            roles=roles,
+            jobs=serialized,
+            countries=countries,
+            email_interval_hours=alert.get("email_interval_hours", 24),
+        )
 
-    return {"alert_id": alert_id, "count": len(jobs), "jobs": jobs[:30]}
+    return {"alert_id": alert_id, "count": len(serialized), "jobs": serialized[:30]}
