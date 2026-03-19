@@ -633,7 +633,7 @@ You have 6 seconds. Then you go deep.
 
 {jd_section}
 RESUME:
-{resume_text[:6000] if resume_text else 'No resume provided'}
+{resume_text[:4000] if resume_text else 'No resume provided'}
 
 Return a JSON critique with EXACTLY this structure. Be specific. Quote actual text. No softening.
 
@@ -739,7 +739,7 @@ Rules:
 
     resp = client.messages.create(
         model=MODEL,
-        max_tokens=3500,
+        max_tokens=2000,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
     )

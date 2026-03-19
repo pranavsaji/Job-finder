@@ -311,7 +311,7 @@ class BuildFromCritiqueRequest(BaseModel):
 
 
 @router.post("/critique")
-def critique_resume(
+async def critique_resume(
     payload: CritiqueRequest,
     current_user: User = Depends(get_current_user),
 ):
@@ -321,10 +321,15 @@ def critique_resume(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No resume uploaded. Upload your resume first.",
         )
-    import asyncio
-    result = claude_service.critique_resume(
-        resume_text=current_user.resume_text,
-        job_description=payload.job_description or "",
+    import asyncio, functools
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        functools.partial(
+            claude_service.critique_resume,
+            resume_text=current_user.resume_text,
+            job_description=payload.job_description or "",
+        ),
     )
     return result
 
