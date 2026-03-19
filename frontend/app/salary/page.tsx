@@ -27,8 +27,7 @@ interface SalaryResearchResult {
 }
 
 interface SalaryEntry {
-  id: number;
-  job_id?: number;
+  job_id: number;
   role?: string;
   company?: string;
   salary_range?: string;
@@ -39,12 +38,15 @@ interface SalaryEntry {
 }
 
 interface SalaryIntelligence {
-  total_with_salary: number;
-  avg_salary?: number;
-  median_salary?: number;
-  max_salary?: number;
   entries: SalaryEntry[];
-  company_averages: Array<{ company: string; avg: number; count: number }>;
+  company_averages: Array<{ company: string; avg_salary: number }>;
+  stats: {
+    count: number;
+    avg: number;
+    median: number;
+    max: number;
+    min: number;
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -140,7 +142,19 @@ export default function SalaryPage() {
         location: location.trim() || undefined,
         level: level || undefined,
       });
-      setResult(res.data);
+      const d = res.data;
+      setResult({
+        role: role.trim(),
+        company: company.trim() || undefined,
+        level: level || undefined,
+        location: location.trim() || undefined,
+        salary_low: d.range_low,
+        salary_high: d.range_high,
+        salary_median: d.median,
+        salary_currency: d.currency,
+        context_notes: d.notes,
+        negotiation_tip: d.negotiation_tip,
+      });
     } catch {
       toast.error("Salary research failed. Try again.");
     } finally {
@@ -149,7 +163,7 @@ export default function SalaryPage() {
   }
 
   const maxCompanyAvg = intel?.company_averages?.length
-    ? Math.max(...intel.company_averages.map((c) => c.avg))
+    ? Math.max(...intel.company_averages.map((c) => c.avg_salary))
     : 0;
 
   return (
@@ -318,7 +332,7 @@ export default function SalaryPage() {
               <div className="space-y-2">
                 {[...Array(3)].map((_, i) => <div key={i} className="skeleton h-10 rounded-lg" />)}
               </div>
-            ) : !intel || intel.total_with_salary === 0 ? (
+            ) : !intel || intel.stats?.count === 0 ? (
               <div className="text-center py-10">
                 <DollarSign size={36} className="mx-auto mb-3 text-white/15" />
                 <p className="text-white/35 text-sm font-medium">No salary data yet</p>
@@ -331,10 +345,10 @@ export default function SalaryPage() {
                 {/* Stats Bar */}
                 <div className="grid grid-cols-4 gap-3 mb-5">
                   {[
-                    { label: "With Salary", value: intel.total_with_salary.toString(), color: "#60a5fa" },
-                    { label: "Average",     value: formatK(intel.avg_salary),           color: "#a78bfa" },
-                    { label: "Median",      value: formatK(intel.median_salary),         color: "#34d399" },
-                    { label: "Max",         value: formatK(intel.max_salary),            color: "#4ade80" },
+                    { label: "With Salary", value: String(intel.stats?.count ?? 0),  color: "#60a5fa" },
+                    { label: "Average",     value: formatK(intel.stats?.avg),         color: "#a78bfa" },
+                    { label: "Median",      value: formatK(intel.stats?.median),      color: "#34d399" },
+                    { label: "Max",         value: formatK(intel.stats?.max),         color: "#4ade80" },
                   ].map((stat) => (
                     <div key={stat.label} className="text-center rounded-xl p-2.5"
                       style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
@@ -352,9 +366,8 @@ export default function SalaryPage() {
                       {intel.company_averages.slice(0, 20).map((c, i) => (
                         <div key={i} className="flex items-center gap-3">
                           <span className="text-white/55 text-xs w-32 truncate flex-shrink-0">{c.company}</span>
-                          <MiniBar value={c.avg} max={maxCompanyAvg} />
-                          <span className="text-white/70 text-xs font-semibold w-12 text-right flex-shrink-0">{formatK(c.avg)}</span>
-                          <span className="text-white/25 text-[10px] w-8 text-right flex-shrink-0">{c.count}j</span>
+                          <MiniBar value={c.avg_salary} max={maxCompanyAvg} />
+                          <span className="text-white/70 text-xs font-semibold w-12 text-right flex-shrink-0">{formatK(c.avg_salary)}</span>
                         </div>
                       ))}
                     </div>
@@ -388,7 +401,7 @@ export default function SalaryPage() {
                   <tbody>
                     {intel.entries.map((e) => (
                       <tr
-                        key={e.id}
+                        key={e.job_id}
                         className="hover:bg-white/[0.02] transition-colors"
                         style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
                       >
