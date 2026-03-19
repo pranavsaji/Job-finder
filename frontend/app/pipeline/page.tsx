@@ -614,8 +614,9 @@ export default function PipelinePage() {
     setShowAddModal(false);
   }
 
+  const safeEntries = Array.isArray(entries) ? entries : [];
   const stageCounts = KANBAN_STAGES.reduce<Record<string, number>>((acc, s) => {
-    acc[s] = entries.filter((e) => e.stage === s).length;
+    acc[s] = safeEntries.filter((e) => e.stage === s).length;
     return acc;
   }, {});
 
@@ -625,7 +626,7 @@ export default function PipelinePage() {
       <div className="flex items-center justify-between mb-6 flex-shrink-0">
         <div>
           <h1 className="text-3xl font-bold gradient-text">Pipeline</h1>
-          <p className="text-white/40 text-sm mt-1">Application tracking & CRM — {entries.length} total applications</p>
+          <p className="text-white/40 text-sm mt-1">Application tracking & CRM — {safeEntries.length} total applications</p>
         </div>
         <button onClick={() => setShowAddModal(true)} className="btn-primary">
           <Plus size={16} /> Add Application
@@ -663,7 +664,7 @@ export default function PipelinePage() {
         <div className="flex gap-4 overflow-x-auto pb-4 flex-1">
           {KANBAN_STAGES.map((stage) => {
             const cfg = STAGE_CONFIG[stage];
-            const stageEntries = entries.filter((e) => e.stage === stage);
+            const stageEntries = safeEntries.filter((e) => e.stage === stage);
             return (
               <div key={stage} className="min-w-[220px] w-[220px] flex flex-col">
                 {/* Column Header */}
