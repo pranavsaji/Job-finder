@@ -77,112 +77,49 @@ app.include_router(contacts_router.router)
 
 
 def _migrate_db():
-    """Add any missing columns without Alembic (SQLite-safe)."""
+    """Add any missing columns without Alembic (PostgreSQL + SQLite safe).
+
+    IMPORTANT: each migration must rollback on failure before the next one
+    runs. In PostgreSQL, an unhandled exception leaves the connection in an
+    aborted-transaction state, causing every subsequent statement to silently
+    no-op — which is why columns were missing in prod.
+    """
+    import re
     from sqlalchemy import text
     from backend.models.database import engine
+
+    # Use TIMESTAMP for PostgreSQL, DATETIME for SQLite
+    is_pg = "postgresql" in str(engine.url).lower() or "psycopg" in str(engine.url).lower()
+    ts_type = "TIMESTAMP" if is_pg else "DATETIME"
+
+    migrations = [
+        ("users",         "is_admin",             "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("jobs",          "user_id",               "INTEGER"),
+        ("mock_sessions", "research_context",      "TEXT"),
+        ("mock_sessions", "job_description",       "TEXT"),
+        ("mock_sessions", "resume_snapshot",       "TEXT"),
+        ("mock_sessions", "speech_metrics",        "TEXT"),
+        ("mock_sessions", "cheat_flags",           "TEXT"),
+        ("mock_sessions", "difficulty",            "VARCHAR(20) DEFAULT 'medium'"),
+        ("mock_sessions", "ended_at",              ts_type),
+        ("jobs",          "follow_up_at",          ts_type),
+        ("jobs",          "match_score",           "INTEGER"),
+        ("jobs",          "matched_role",          "VARCHAR(500)"),
+        ("jobs",          "salary_range",          "VARCHAR(200)"),
+        ("users",         "scraping_preferences",  "TEXT DEFAULT '{}'"),
+        ("users",         "resume_filename",       "VARCHAR(500)"),
+        ("users",         "hunter_api_key",        "VARCHAR(500)"),
+        ("users",         "target_roles",          "TEXT DEFAULT '[]'"),
+    ]
+
     with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
-            conn.commit()
-            print("Migration applied: users.is_admin")
-        except Exception:
-            pass  # Column already exists
-        try:
-            conn.execute(text("ALTER TABLE jobs ADD COLUMN user_id INTEGER"))
-            conn.commit()
-            print("Migration applied: jobs.user_id")
-        except Exception:
-            pass  # Column already exists
-        try:
-            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN research_context TEXT"))
-            conn.commit()
-            print("Migration applied: mock_sessions.research_context")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN job_description TEXT"))
-            conn.commit()
-            print("Migration applied: mock_sessions.job_description")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN resume_snapshot TEXT"))
-            conn.commit()
-            print("Migration applied: mock_sessions.resume_snapshot")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN speech_metrics TEXT"))
-            conn.commit()
-            print("Migration applied: mock_sessions.speech_metrics")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN cheat_flags TEXT"))
-            conn.commit()
-            print("Migration applied: mock_sessions.cheat_flags")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN difficulty VARCHAR(20) DEFAULT 'medium'"))
-            conn.commit()
-            print("Migration applied: mock_sessions.difficulty")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN ended_at DATETIME"))
-            conn.commit()
-            print("Migration applied: mock_sessions.ended_at")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE jobs ADD COLUMN follow_up_at DATETIME"))
-            conn.commit()
-            print("Migration applied: jobs.follow_up_at")
-        except Exception:
-            pass  # Column already exists
-        try:
-            conn.execute(text("ALTER TABLE jobs ADD COLUMN match_score INTEGER"))
-            conn.commit()
-            print("Migration applied: jobs.match_score")
-        except Exception:
-            pass  # Column already exists
-        try:
-            conn.execute(text("ALTER TABLE jobs ADD COLUMN matched_role VARCHAR(500)"))
-            conn.commit()
-            print("Migration applied: jobs.matched_role")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE jobs ADD COLUMN salary_range VARCHAR(200)"))
-            conn.commit()
-            print("Migration applied: jobs.salary_range")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE users ADD COLUMN scraping_preferences TEXT DEFAULT '{}'"))
-            conn.commit()
-            print("Migration applied: users.scraping_preferences")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE users ADD COLUMN resume_filename VARCHAR(500)"))
-            conn.commit()
-            print("Migration applied: users.resume_filename")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE users ADD COLUMN hunter_api_key VARCHAR(500)"))
-            conn.commit()
-            print("Migration applied: users.hunter_api_key")
-        except Exception:
-            pass
-        try:
-            conn.execute(text("ALTER TABLE users ADD COLUMN target_roles TEXT DEFAULT '[]'"))
-            conn.commit()
-            print("Migration applied: users.target_roles")
-        except Exception:
-            pass
+        for table, column, col_type in migrations:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                conn.commit()
+                print(f"Migration applied: {table}.{column}")
+            except Exception:
+                conn.rollback()  # Reset aborted transaction before next migration
 
 
 def _seed_admin():
