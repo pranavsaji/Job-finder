@@ -79,39 +79,55 @@ async def start_session(
     current_user: User = Depends(get_current_user),
 ):
     """Create a session, run research agent, return the AI's opening message."""
-    research = await research_interview_context(
-        payload.company, payload.role, payload.interview_type
-    )
+    import functools
 
-    opening = generate_opening_message(
-        company=payload.company,
-        role=payload.role,
-        interview_type=payload.interview_type,
-        difficulty=payload.difficulty,
-        research_context=research,
-        resume_text=current_user.resume_text,
-        job_description=payload.job_description,
+    try:
+        research = await research_interview_context(
+            payload.company, payload.role, payload.interview_type
+        )
+    except Exception as e:
+        print(f"Research failed (non-fatal): {e}")
+        research = ""
+
+    loop = asyncio.get_event_loop()
+    opening = await loop.run_in_executor(
+        None,
+        functools.partial(
+            generate_opening_message,
+            company=payload.company,
+            role=payload.role,
+            interview_type=payload.interview_type,
+            difficulty=payload.difficulty,
+            research_context=research,
+            resume_text=current_user.resume_text,
+            job_description=payload.job_description,
+        ),
     )
 
     ts = datetime.datetime.utcnow().isoformat()
     initial_messages = [{"role": "assistant", "content": opening, "ts": ts}]
 
-    session = MockSession(
-        user_id=current_user.id,
-        job_id=payload.job_id,
-        company=payload.company,
-        role=payload.role,
-        interview_type=payload.interview_type,
-        difficulty=payload.difficulty,
-        job_description=payload.job_description,
-        resume_snapshot=current_user.resume_text,
-        research_context=research,
-        messages=initial_messages,
-        status="active",
-    )
-    db.add(session)
-    db.commit()
-    db.refresh(session)
+    try:
+        session = MockSession(
+            user_id=current_user.id,
+            job_id=payload.job_id,
+            company=payload.company,
+            role=payload.role,
+            interview_type=payload.interview_type,
+            difficulty=payload.difficulty,
+            job_description=payload.job_description,
+            resume_snapshot=current_user.resume_text,
+            research_context=research,
+            messages=initial_messages,
+            status="active",
+        )
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+    except Exception as e:
+        db.rollback()
+        print(f"MockSession create error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
 
     return {
         "session_id": session.id,

@@ -98,7 +98,43 @@ def _migrate_db():
             conn.commit()
             print("Migration applied: mock_sessions.research_context")
         except Exception:
-            pass  # Column already exists
+            pass
+        try:
+            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN job_description TEXT"))
+            conn.commit()
+            print("Migration applied: mock_sessions.job_description")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN resume_snapshot TEXT"))
+            conn.commit()
+            print("Migration applied: mock_sessions.resume_snapshot")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN speech_metrics TEXT"))
+            conn.commit()
+            print("Migration applied: mock_sessions.speech_metrics")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN cheat_flags TEXT"))
+            conn.commit()
+            print("Migration applied: mock_sessions.cheat_flags")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN difficulty VARCHAR(20) DEFAULT 'medium'"))
+            conn.commit()
+            print("Migration applied: mock_sessions.difficulty")
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE mock_sessions ADD COLUMN ended_at DATETIME"))
+            conn.commit()
+            print("Migration applied: mock_sessions.ended_at")
+        except Exception:
+            pass
         try:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN follow_up_at DATETIME"))
             conn.commit()
