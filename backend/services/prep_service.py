@@ -8,14 +8,20 @@ import re
 from typing import Optional
 
 
-def _ddgs_search(query: str, max_results: int = 6) -> list:
-    try:
-        from ddgs import DDGS
-        ddgs = DDGS(timeout=15)
-        return list(ddgs.text(query, max_results=max_results))
-    except Exception as e:
-        print(f"DDG prep error: {e}")
-        return []
+def _ddgs_search(query: str, max_results: int = 6, _retry: int = 2) -> list:
+    for attempt in range(_retry):
+        try:
+            from ddgs import DDGS
+            ddgs = DDGS(timeout=15)
+            results = list(ddgs.text(query, max_results=max_results))
+            if results:
+                return results
+        except Exception as e:
+            print(f"DDG search error (attempt {attempt+1}) for '{query[:60]}': {e}")
+            if attempt < _retry - 1:
+                import time
+                time.sleep(1.5)
+    return []
 
 
 async def generate_prep_pack(company: str, role: str, job_description: str = "") -> dict:

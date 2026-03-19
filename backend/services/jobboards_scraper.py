@@ -21,17 +21,22 @@ def _preset_to_timelimit(date_preset):
     return mapping.get(date_preset or "", None)
 
 
-def _ddgs_search(query: str, max_results: int = 10, timelimit=None) -> list:
-    try:
-        from ddgs import DDGS
-        kwargs = {"max_results": max_results}
-        if timelimit:
-            kwargs["timelimit"] = timelimit
-        ddgs = DDGS(timeout=15)
-        return list(ddgs.text(query, **kwargs))
-    except Exception as e:
-        print(f"DDG search error for '{query[:60]}': {e}")
-        return []
+def _ddgs_search(query: str, max_results: int = 10, timelimit=None, _retry: int = 2) -> list:
+    for attempt in range(_retry):
+        try:
+            from ddgs import DDGS
+            kwargs = {"max_results": max_results}
+            if timelimit:
+                kwargs["timelimit"] = timelimit
+            ddgs = DDGS(timeout=15)
+            results = list(ddgs.text(query, **kwargs))
+            if results:
+                return results
+        except Exception as e:
+            print(f"DDG search error (attempt {attempt+1}) for '{query[:60]}': {e}")
+            if attempt < _retry - 1:
+                time.sleep(1.5)
+    return []
 
 
 _HEADERS = {

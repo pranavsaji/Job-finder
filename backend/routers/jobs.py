@@ -144,6 +144,7 @@ async def trigger_scrape_sync(
     # Auto-clean stale new jobs before adding fresh results
     _auto_clean(db, current_user.id)
 
+    jobs_data = []
     try:
         jobs_data = await _asyncio.wait_for(
             scrape_all(
@@ -159,7 +160,9 @@ async def trigger_scrape_sync(
             timeout=110,
         )
     except _asyncio.TimeoutError:
-        jobs_data = []
+        print("scrape_all timed out — returning partial results")
+    except Exception as e:
+        print(f"scrape_all unexpected error: {e}")
 
     # Supplement with LinkedIn authenticated scraper if user has saved credentials
     wants_linkedin = not payload.platforms or "linkedin" in (payload.platforms or [])
@@ -170,15 +173,18 @@ async def trigger_scrape_sync(
         try:
             from backend.services.linkedin_auth_scraper import scrape_linkedin_authenticated, decrypt_password
             password = decrypt_password(li_enc)
-            li_result = await scrape_linkedin_authenticated(
-                email=li_email,
-                password=password,
-                roles=payload.roles,
-                country=payload.country,
-                date_from=payload.date_from,
-                date_to=payload.date_to,
-                limit_per_platform=payload.limit_per_platform,
-                date_preset=payload.date_preset,
+            li_result = await _asyncio.wait_for(
+                scrape_linkedin_authenticated(
+                    email=li_email,
+                    password=password,
+                    roles=payload.roles,
+                    country=payload.country,
+                    date_from=payload.date_from,
+                    date_to=payload.date_to,
+                    limit_per_platform=payload.limit_per_platform,
+                    date_preset=payload.date_preset,
+                ),
+                timeout=30,
             )
             if li_result["status"] == "ok":
                 for j in li_result["jobs"]:
@@ -186,45 +192,55 @@ async def trigger_scrape_sync(
                     j["_source"] = "authenticated"
                 jobs_data = li_result["jobs"] + jobs_data
         except Exception as e:
-            print(f"LinkedIn auth scrape error: {e}")
+            print(f"LinkedIn auth scrape error (non-fatal): {e}")
 
     saved_jobs = []
     for job_data in jobs_data:
-        # Check dedup per user (same URL + same user)
-        existing = (
-            db.query(Job)
-            .filter(Job.post_url == job_data["post_url"], Job.user_id == current_user.id)
-            .first()
-        )
-        if existing:
-            saved_jobs.append(existing.to_dict())
+        if not job_data.get("post_url"):
             continue
+        try:
+            existing = (
+                db.query(Job)
+                .filter(Job.post_url == job_data["post_url"], Job.user_id == current_user.id)
+                .first()
+            )
+            if existing:
+                saved_jobs.append(existing.to_dict())
+                continue
 
-        job = Job(
-            user_id=current_user.id,
-            title=job_data.get("title"),
-            company=job_data.get("company"),
-            poster_name=job_data.get("poster_name"),
-            poster_title=job_data.get("poster_title"),
-            poster_profile_url=job_data.get("poster_profile_url"),
-            poster_linkedin=job_data.get("poster_linkedin"),
-            post_url=job_data["post_url"],
-            platform=job_data["platform"],
-            post_content=job_data.get("post_content"),
-            posted_at=job_data.get("posted_at"),
-            location=job_data.get("location"),
-            job_type=job_data.get("job_type"),
-            is_remote=job_data.get("is_remote", False),
-            tags=job_data.get("tags", []),
-            status="new",
-            matched_role=job_data.get("matched_role"),
-            salary_range=job_data.get("salary_range"),
-        )
-        db.add(job)
-        db.flush()
-        saved_jobs.append(job.to_dict())
+            job = Job(
+                user_id=current_user.id,
+                title=job_data.get("title"),
+                company=job_data.get("company"),
+                poster_name=job_data.get("poster_name"),
+                poster_title=job_data.get("poster_title"),
+                poster_profile_url=job_data.get("poster_profile_url"),
+                poster_linkedin=job_data.get("poster_linkedin"),
+                post_url=job_data["post_url"],
+                platform=job_data["platform"],
+                post_content=job_data.get("post_content"),
+                posted_at=job_data.get("posted_at"),
+                location=job_data.get("location"),
+                job_type=job_data.get("job_type"),
+                is_remote=job_data.get("is_remote", False),
+                tags=job_data.get("tags", []),
+                status="new",
+                matched_role=job_data.get("matched_role"),
+                salary_range=job_data.get("salary_range"),
+            )
+            db.add(job)
+            db.flush()
+            saved_jobs.append(job.to_dict())
+        except Exception as e:
+            print(f"Error saving job '{job_data.get('title')}': {e}")
+            db.rollback()
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        print(f"Final commit error: {e}")
+        db.rollback()
+
     return {"scraped": len(jobs_data), "saved": len(saved_jobs), "jobs": saved_jobs}
 
 

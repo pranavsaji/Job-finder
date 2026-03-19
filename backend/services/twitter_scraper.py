@@ -11,18 +11,22 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 
-def _ddgs_search(query: str, max_results: int = 10, timelimit: Optional[str] = None) -> list:
-    try:
-        from ddgs import DDGS
-        kwargs = {"max_results": max_results}
-        if timelimit:
-            kwargs["timelimit"] = timelimit
-        ddgs = DDGS(timeout=15)
-        results = list(ddgs.text(query, **kwargs))
-        return results
-    except Exception as e:
-        print(f"DDG search error for '{query[:60]}': {e}")
-        return []
+def _ddgs_search(query: str, max_results: int = 10, timelimit: Optional[str] = None, _retry: int = 2) -> list:
+    for attempt in range(_retry):
+        try:
+            from ddgs import DDGS
+            kwargs = {"max_results": max_results}
+            if timelimit:
+                kwargs["timelimit"] = timelimit
+            ddgs = DDGS(timeout=15)
+            results = list(ddgs.text(query, **kwargs))
+            if results:
+                return results
+        except Exception as e:
+            print(f"DDG search error (attempt {attempt+1}) for '{query[:60]}': {e}")
+            if attempt < _retry - 1:
+                time.sleep(1.5)
+    return []
 
 
 def _preset_to_timelimit(date_preset: Optional[str]) -> Optional[str]:

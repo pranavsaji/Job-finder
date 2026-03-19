@@ -108,6 +108,9 @@ async def scrape_all(
     return all_jobs
 
 
+_PLATFORM_TIMEOUT = 45  # seconds max per platform
+
+
 async def _scrape_platform(
     platform: str,
     roles: list,
@@ -117,31 +120,40 @@ async def _scrape_platform(
     limit_per_platform: int = 10,
     date_preset: Optional[str] = None,
 ) -> list:
-    """Scrape a single platform with error handling."""
+    """Scrape a single platform with per-platform timeout and full error isolation."""
     scraper_fn = PLATFORM_MAP.get(platform)
     if not scraper_fn:
         return []
 
-    try:
-        results = await scraper_fn(
-            roles=roles,
-            country=country,
-            date_from=date_from,
-            date_to=date_to,
-            limit_per_platform=limit_per_platform,
-            date_preset=date_preset,
-        )
-        return results[:limit_per_platform] if limit_per_platform > 0 else results
-    except TypeError:
-        # Scraper doesn't accept the new kwargs — fall back gracefully
+    async def _run():
         try:
-            results = await scraper_fn(roles=roles, country=country, date_from=date_from, date_to=date_to)
+            results = await scraper_fn(
+                roles=roles,
+                country=country,
+                date_from=date_from,
+                date_to=date_to,
+                limit_per_platform=limit_per_platform,
+                date_preset=date_preset,
+            )
             return results[:limit_per_platform] if limit_per_platform > 0 else results
+        except TypeError:
+            try:
+                results = await scraper_fn(roles=roles, country=country, date_from=date_from, date_to=date_to)
+                return results[:limit_per_platform] if limit_per_platform > 0 else results
+            except Exception as e:
+                print(f"Error scraping {platform} (fallback): {e}")
+                return []
         except Exception as e:
             print(f"Error scraping {platform}: {e}")
             return []
+
+    try:
+        return await asyncio.wait_for(_run(), timeout=_PLATFORM_TIMEOUT)
+    except asyncio.TimeoutError:
+        print(f"Platform {platform} timed out after {_PLATFORM_TIMEOUT}s")
+        return []
     except Exception as e:
-        print(f"Error scraping {platform}: {e}")
+        print(f"Platform {platform} unexpected error: {e}")
         return []
 
 
