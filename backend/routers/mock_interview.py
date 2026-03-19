@@ -160,7 +160,11 @@ async def _chat_generator(
             yield "data: [DONE:False]\n\n"
             return
 
-        messages = list(sess.messages or [])
+        raw_msgs = sess.messages or []
+        if isinstance(raw_msgs, str):
+            import json as _json
+            raw_msgs = _json.loads(raw_msgs)
+        messages = list(raw_msgs)
         ts = datetime.datetime.utcnow().isoformat()
 
         # Append user turn (include code if coding round)
@@ -217,7 +221,11 @@ async def _chat_generator(
     try:
         sess2 = db2.query(MockSession).filter(MockSession.id == session_id).first()
         if sess2:
-            msgs = list(sess2.messages or [])
+            raw2 = sess2.messages or []
+            if isinstance(raw2, str):
+                import json as _json
+                raw2 = _json.loads(raw2)
+            msgs = list(raw2)
             msgs.append({"role": "user", "content": content, "ts": ts})
             msgs.append({
                 "role": "assistant",

@@ -419,7 +419,7 @@ export default function MockPage() {
     setLoadingSessions(true);
     try {
       const res = await mockApi.listSessions();
-      setSessions(res.data || []);
+      setSessions(res.data.sessions || []);
     } catch {
       toast.error("Failed to load sessions");
     } finally {
@@ -500,8 +500,8 @@ export default function MockPage() {
             <div className="grid grid-cols-3 gap-4">
               {[
                 { label: "Total Sessions", value: analytics.total_sessions ?? 0, color: "#a78bfa" },
-                { label: "Avg Score", value: analytics.avg_score != null ? Math.round(analytics.avg_score) : "—", color: "#4ade80" },
-                { label: "Pass Rate", value: analytics.pass_rate != null ? `${Math.round(analytics.pass_rate * 100)}%` : "—", color: "#60a5fa" },
+                { label: "Avg Score", value: analytics.overall_avg != null ? Math.round(analytics.overall_avg) : "—", color: "#4ade80" },
+                { label: "Pass Rate", value: analytics.pass_rate != null ? `${Math.round(analytics.pass_rate)}%` : "—", color: "#60a5fa" },
               ].map((s) => (
                 <div key={s.label} className="glass-card p-5 text-center">
                   <div className="text-3xl font-bold mb-1" style={{ color: s.color }}>{s.value}</div>
@@ -511,11 +511,11 @@ export default function MockPage() {
             </div>
 
             {/* Score over time — SVG line chart */}
-            {analytics.scores_over_time && analytics.scores_over_time.length > 1 && (
+            {analytics.trends && analytics.trends.length > 1 && (
               <div className="glass-card p-5">
                 <h3 className="text-white/60 text-xs font-semibold uppercase tracking-wider mb-4">Score Over Time (Last 10)</h3>
                 {(() => {
-                  const pts: number[] = analytics.scores_over_time.slice(-10);
+                  const pts: number[] = analytics.trends.slice(-10).map((t: any) => t.overall_score ?? 0);
                   const minV = Math.min(...pts);
                   const maxV = Math.max(...pts);
                   const range = maxV - minV || 1;
@@ -540,12 +540,12 @@ export default function MockPage() {
             )}
 
             {/* Avg score per type */}
-            {analytics.by_type && Object.keys(analytics.by_type).length > 0 && (
+            {analytics.avg_by_type && Object.keys(analytics.avg_by_type).length > 0 && (
               <div className="glass-card p-5">
                 <h3 className="text-white/60 text-xs font-semibold uppercase tracking-wider mb-4">Avg Score by Type</h3>
                 <div className="space-y-2.5">
-                  {Object.entries(analytics.by_type as Record<string, number>).map(([type, avg]) => {
-                    const maxAvg = Math.max(...Object.values(analytics.by_type as Record<string, number>));
+                  {Object.entries(analytics.avg_by_type as Record<string, number>).map(([type, avg]) => {
+                    const maxAvg = Math.max(...Object.values(analytics.avg_by_type as Record<string, number>));
                     const pct = maxAvg > 0 ? (avg / maxAvg) * 100 : 0;
                     const color = avg >= 70 ? "#4ade80" : avg >= 55 ? "#f59e0b" : "#f87171";
                     return (
@@ -575,8 +575,7 @@ export default function MockPage() {
         ) : (
           <div className="space-y-3">
             {sessions.map((s) => {
-              const ev = s.evaluation_result;
-              const verdictColor = ev?.verdict === "pass" ? "#4ade80" : ev?.verdict === "conditional_pass" ? "#f59e0b" : ev ? "#f87171" : "#94a3b8";
+              const verdictColor = s.verdict === "pass" ? "#4ade80" : s.verdict === "conditional_pass" ? "#f59e0b" : s.verdict ? "#f87171" : "#94a3b8";
               return (
                 <div key={s.id} className="glass-card p-4 flex items-center gap-4">
                   <div className="flex-1 min-w-0">
@@ -589,19 +588,19 @@ export default function MockPage() {
                       <span className="text-white/35">{s.interview_type?.replace("_", " ")}</span>
                       <span className="text-white/20">·</span>
                       <span className="text-white/35">{s.difficulty}</span>
-                      {s.created_at && (
+                      {s.started_at && (
                         <>
                           <span className="text-white/20">·</span>
-                          <span className="text-white/25">{new Date(s.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                          <span className="text-white/25">{new Date(s.started_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
                         </>
                       )}
                     </div>
                   </div>
-                  {ev && (
+                  {s.verdict && (
                     <div className="text-center flex-shrink-0">
-                      <div className="text-xl font-black" style={{ color: verdictColor }}>{ev.overall_score}</div>
+                      <div className="text-xl font-black" style={{ color: verdictColor }}>{s.overall_score}</div>
                       <div className="text-[10px] font-semibold" style={{ color: verdictColor }}>
-                        {ev.verdict === "pass" ? "PASS" : ev.verdict === "conditional_pass" ? "COND." : "FAIL"}
+                        {s.verdict === "pass" ? "PASS" : s.verdict === "conditional_pass" ? "COND." : "FAIL"}
                       </div>
                     </div>
                   )}
