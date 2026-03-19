@@ -359,7 +359,7 @@ export default function ContactsPage() {
     try {
       const params = filter !== "all" ? { status: filter } : undefined;
       const res = await contactsApi.list(params);
-      setContacts(res.data || []);
+      setContacts(res.data.contacts || []);
     } catch {
       toast.error("Failed to load contacts");
     } finally {
