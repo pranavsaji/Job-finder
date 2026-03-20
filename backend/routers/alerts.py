@@ -109,12 +109,22 @@ async def check_alert(
     else:
         search_roles = roles
 
-    jobs = await scrape_all(
-        roles=search_roles,
-        platforms=alert.get("platforms"),
-        date_preset=alert.get("date_preset", "24h"),
-        limit_per_platform=15,
-    )
+    import asyncio as _asyncio
+    jobs = []
+    try:
+        jobs = await _asyncio.wait_for(
+            scrape_all(
+                roles=search_roles,
+                platforms=alert.get("platforms"),
+                date_preset=alert.get("date_preset", "24h"),
+                limit_per_platform=15,
+            ),
+            timeout=80,  # stay under 90s frontend axios timeout
+        )
+    except _asyncio.TimeoutError:
+        print(f"check_alert {alert_id}: scrape timed out after 80s — returning partial results")
+    except Exception as e:
+        print(f"check_alert {alert_id}: scrape error: {e}")
 
     # Serialize posted_at
     serialized = []
