@@ -47,26 +47,55 @@ def get_scheduler() -> AsyncIOScheduler:
 
 
 def start_scheduler():
+    """Start the APScheduler async scheduler, binding to the running event loop.
+
+    Must be called from within a running event loop (e.g. FastAPI startup event).
+    Explicitly passes the running loop to APScheduler so it works correctly on
+    Python 3.10+ and Railway's container environment.
+    """
+    import asyncio as _asyncio
+
     sched = get_scheduler()
-    if not sched.running:
-        sched.add_job(
-            run_all_alerts,
-            trigger="interval",
-            minutes=30,           # tick every 30 min; per-alert interval checked inside
-            id="alert_tick",
-            replace_existing=True,
-            next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=30),
-        )
-        sched.add_job(
-            _check_followups,
-            trigger="cron",
-            hour=8,
-            minute=0,
-            id="daily_followups",
-            replace_existing=True,
-        )
-        sched.start()
-        log.info("Alert scheduler started (ticks every 30 min, per-alert intervals enforced)")
+    if sched.running:
+        log.info("Scheduler already running — skipping start")
+        return
+
+    # Explicitly bind to the running event loop (critical for Python 3.10+ / Railway)
+    try:
+        loop = _asyncio.get_running_loop()
+        sched.configure(event_loop=loop)
+        log.info("Scheduler bound to running event loop: %s", loop)
+    except RuntimeError:
+        log.warning("No running event loop found — APScheduler will try to find one itself")
+
+    # First tick 15 seconds after startup so Railway health check passes first
+    first_run = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=15)
+
+    sched.add_job(
+        run_all_alerts,
+        trigger="interval",
+        minutes=30,           # tick every 30 min; per-alert interval checked inside
+        id="alert_tick",
+        replace_existing=True,
+        next_run_time=first_run,
+        misfire_grace_time=3600,  # allow up to 1h grace for Railway container restarts
+        coalesce=True,            # if multiple ticks missed, run only once on restart
+    )
+    sched.add_job(
+        _check_followups,
+        trigger="cron",
+        hour=8,
+        minute=0,
+        id="daily_followups",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    sched.start()
+    log.info(
+        "Alert scheduler started (first tick in 15s, then every 30 min; SMTP configured: %s)",
+        _smtp_configured(),
+    )
 
 
 def stop_scheduler():
@@ -79,11 +108,18 @@ def stop_scheduler():
 
 async def run_all_alerts():
     """Iterate every user's alerts, scrape, save new jobs, send email."""
+    log.info("=== Alert tick starting ===")
     db = SessionLocal()
     try:
         users = db.query(User).all()
+    except Exception as e:
+        log.error("Failed to query users in alert tick: %s", e)
+        return
     finally:
         db.close()
+
+    total_alerts = sum(len((u.scraping_preferences or {}).get("alerts", [])) for u in users)
+    log.info("Alert tick: %d users, %d total alert configs", len(users), total_alerts)
 
     for user in users:
         prefs = user.scraping_preferences or {}
@@ -95,7 +131,9 @@ async def run_all_alerts():
                 await _process_alert(user, alert)
             except Exception as e:
                 log.error("Error processing alert %s for user %s: %s",
-                          alert.get("id"), user.id, e)
+                          alert.get("id"), user.id, e, exc_info=True)
+
+    log.info("=== Alert tick complete ===")
 
 
 async def _process_alert(user: User, alert: dict):
@@ -156,12 +194,16 @@ async def _process_alert(user: User, alert: dict):
                 date_preset=date_preset,
                 limit_per_platform=15,
             ),
-            timeout=90,
+            timeout=120,
         )
     except asyncio.TimeoutError:
-        log.warning("Alert %s timed out", alert_id)
-        return
+        log.warning("Alert %s timed out after 120s — saving partial results if any", alert_id)
+        jobs_data = []
+    except Exception as e:
+        log.error("Alert %s scrape_all error: %s", alert_id, e, exc_info=True)
+        jobs_data = []
 
+    log.info("Alert %s scraped %d jobs", alert_id, len(jobs_data))
     _save_new_jobs(user.id, jobs_data)
     _update_last_checked(user, alert_id, len(jobs_data))
 

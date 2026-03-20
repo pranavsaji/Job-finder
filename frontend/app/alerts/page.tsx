@@ -161,9 +161,19 @@ export default function AlertsPage() {
       const r = await axios.post(`${API}/alerts/${alert.id}/check`, {}, { headers, timeout: 90000 });
       setResults((prev) => ({ ...prev, [alert.id]: r.data.jobs || [] }));
       setAlerts((prev) => prev.map((a) =>
-        a.id === alert.id ? { ...a, last_checked: new Date().toISOString(), last_count: r.data.count } : a
+        a.id === alert.id ? {
+          ...a,
+          last_checked: new Date().toISOString(),
+          last_count: r.data.count,
+          last_emailed_at: r.data.last_emailed_at ?? a.last_emailed_at,
+        } : a
       ));
-      toast.success(`Found ${r.data.count} matches`, { id: `check-${alert.id}` });
+      const emailMsg = r.data.email_sent
+        ? " · email sent"
+        : r.data.smtp_configured
+          ? " · no email (0 matches or skipped)"
+          : " · SMTP not configured";
+      toast.success(`Found ${r.data.count} matches${emailMsg}`, { id: `check-${alert.id}` });
     } catch {
       toast.error("Check failed", { id: `check-${alert.id}` });
     } finally {

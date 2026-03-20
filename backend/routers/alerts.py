@@ -58,6 +58,8 @@ async def create_alert(
     alerts.append(new_alert)
     prefs["alerts"] = alerts
     current_user.scraping_preferences = prefs
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(current_user, "scraping_preferences")
     db.commit()
     return new_alert
 
@@ -73,6 +75,8 @@ async def delete_alert(
     alerts = [a for a in prefs.get("alerts", []) if a.get("id") != alert_id]
     prefs["alerts"] = alerts
     current_user.scraping_preferences = prefs
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(current_user, "scraping_preferences")
     db.commit()
     return {"deleted": alert_id}
 
@@ -124,20 +128,25 @@ async def check_alert(
     from backend.services.alert_scheduler import _save_new_jobs
     _save_new_jobs(current_user.id, jobs)
 
+    from sqlalchemy.orm.attributes import flag_modified
+    from backend.services.alert_scheduler import _send_alert_email, _smtp_configured
+
     # Update last_checked (always); last_emailed_at only when email is actually sent
     now_iso = datetime.datetime.utcnow().isoformat()
+    last_emailed_at = alert.get("last_emailed_at")
+    email_sent = False
+
     for a in alerts:
         if a.get("id") == alert_id:
             a["last_checked"] = now_iso
             a["last_count"] = len(serialized)
-            # Do NOT touch last_emailed_at here — only update after email sent below
     prefs["alerts"] = alerts
     current_user.scraping_preferences = prefs
+    flag_modified(current_user, "scraping_preferences")
     db.commit()
 
     # Always send email on manual check (if jobs found and SMTP configured)
-    if serialized:
-        from backend.services.alert_scheduler import _send_alert_email
+    if serialized and _smtp_configured():
         _send_alert_email(
             to_email=current_user.email,
             to_name=current_user.name or "",
@@ -147,10 +156,17 @@ async def check_alert(
             countries=countries,
             email_interval_hours=alert.get("email_interval_hours", 24),
         )
-        # Only update last_emailed_at after a successful send attempt
+        # Update last_emailed_at in DB
+        last_emailed_at = now_iso
         from backend.services.alert_scheduler import _update_prefs
-        _update_prefs(current_user.id, alert_id, {
-            "last_emailed_at": datetime.datetime.utcnow().isoformat(),
-        })
+        _update_prefs(current_user.id, alert_id, {"last_emailed_at": last_emailed_at})
+        email_sent = True
 
-    return {"alert_id": alert_id, "count": len(serialized), "jobs": serialized[:30]}
+    return {
+        "alert_id": alert_id,
+        "count": len(serialized),
+        "jobs": serialized[:30],
+        "email_sent": email_sent,
+        "smtp_configured": _smtp_configured(),
+        "last_emailed_at": last_emailed_at,
+    }

@@ -328,7 +328,7 @@ async def score_job(
     from backend.services.match_service import score_job_match
     import asyncio as _asyncio
 
-    loop = _asyncio.get_event_loop()
+    loop = _asyncio.get_running_loop()
     match_score = await loop.run_in_executor(
         None,
         score_job_match,

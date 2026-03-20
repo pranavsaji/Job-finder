@@ -158,11 +158,22 @@ def _seed_admin():
 
 @app.on_event("startup")
 async def startup_event():
+    import logging as _logging
+    _log = _logging.getLogger("startup")
+
     create_tables()
     _migrate_db()
     _seed_admin()
-    from backend.services.alert_scheduler import start_scheduler
-    start_scheduler()
+
+    try:
+        from backend.services.alert_scheduler import start_scheduler, _smtp_configured
+        start_scheduler()
+        _log.info("Scheduler started successfully. SMTP configured: %s", _smtp_configured())
+        print(f"[startup] Scheduler started. SMTP configured: {_smtp_configured()}")
+    except Exception as exc:
+        _log.error("FAILED to start alert scheduler: %s", exc, exc_info=True)
+        print(f"[startup] ERROR: Failed to start alert scheduler: {exc}")
+
     print("Database tables created.")
     print("Job Info Finder API is running.")
 
@@ -186,6 +197,29 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": time.time()}
+
+
+@app.get("/debug/scheduler")
+async def debug_scheduler():
+    """Debug endpoint: check scheduler status and SMTP config (admin-only in prod)."""
+    from backend.services.alert_scheduler import get_scheduler, _smtp_configured
+    sched = get_scheduler()
+    jobs = []
+    if sched.running:
+        for job in sched.get_jobs():
+            jobs.append({
+                "id": job.id,
+                "name": job.name,
+                "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+            })
+    return {
+        "scheduler_running": sched.running,
+        "jobs": jobs,
+        "smtp_configured": _smtp_configured(),
+        "smtp_host": os.getenv("SMTP_HOST", "(not set)"),
+        "smtp_user": os.getenv("SMTP_USER", "(not set)"),
+        "app_url": os.getenv("APP_URL", "(not set)"),
+    }
 
 
 @app.exception_handler(404)
