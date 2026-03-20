@@ -222,6 +222,39 @@ async def debug_scheduler():
     }
 
 
+@app.get("/debug/test-email")
+async def debug_test_email(to: str = ""):
+    """Send a plain test email to verify SMTP credentials. Pass ?to=you@gmail.com"""
+    import smtplib, ssl as _ssl
+    from email.mime.text import MIMEText
+
+    smtp_host = os.getenv("SMTP_HOST", "")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+    email_from = os.getenv("EMAIL_FROM", smtp_user)
+
+    if not (smtp_host and smtp_user and smtp_pass):
+        return {"ok": False, "error": "SMTP not fully configured", "smtp_host": smtp_host, "smtp_user": smtp_user}
+
+    recipient = to or smtp_user  # default: send to self
+    msg = MIMEText("This is a test email from Job Info Finder to verify SMTP is working.")
+    msg["Subject"] = "[Job Finder] SMTP test"
+    msg["From"] = f"Job Info Finder <{email_from}>"
+    msg["To"] = recipient
+
+    try:
+        ctx = _ssl.create_default_context()
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+            server.ehlo()
+            server.starttls(context=ctx)
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, [recipient], msg.as_string())
+        return {"ok": True, "sent_to": recipient, "from": email_from, "smtp_user": smtp_user}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "smtp_user": smtp_user, "smtp_host": smtp_host}
+
+
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
     return JSONResponse(
