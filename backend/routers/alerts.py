@@ -47,7 +47,7 @@ async def create_alert(
         "platforms": payload.platforms,
         "date_preset": payload.date_preset,
         "label": payload.label or ", ".join(payload.roles[:2]),
-        "created_at": __import__("datetime").datetime.utcnow().isoformat(),
+        "created_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
         "last_checked": None,
         "last_count": 0,
         "webhook_url": payload.webhook_url,
@@ -142,7 +142,7 @@ async def check_alert(
     from backend.services.alert_scheduler import _send_alert_email, _smtp_configured
 
     # Update last_checked (always); last_emailed_at only when email is actually sent
-    now_iso = datetime.datetime.utcnow().isoformat()
+    now_iso = datetime.datetime.utcnow().isoformat() + "Z"
     last_emailed_at = alert.get("last_emailed_at")
     email_sent = False
 

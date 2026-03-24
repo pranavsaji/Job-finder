@@ -313,14 +313,14 @@ def _update_prefs(user_id: int, alert_id: str, updates: dict):
 
 def _update_last_checked(user: User, alert_id: str, count: int):
     _update_prefs(user.id, alert_id, {
-        "last_checked": datetime.datetime.utcnow().isoformat(),
+        "last_checked": datetime.datetime.utcnow().isoformat() + "Z",
         "last_count": count,
     })
 
 
 def _update_last_emailed(user: User, alert_id: str):
     _update_prefs(user.id, alert_id, {
-        "last_emailed_at": datetime.datetime.utcnow().isoformat(),
+        "last_emailed_at": datetime.datetime.utcnow().isoformat() + "Z",
     })
 
 
