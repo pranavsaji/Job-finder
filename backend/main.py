@@ -139,15 +139,22 @@ def _seed_admin():
     try:
         existing = db.query(_User).filter(_User.email == admin_email).first()
         if not existing:
-            db.add(_User(
-                email=admin_email,
-                hashed_password=pwd.hash(admin_password),
-                name="Admin",
-                is_admin=True,
-                target_roles=[],
-            ))
-            db.commit()
-            print(f"Admin user created: {admin_email}")
+            # Check if there's an old admin with a different email and update it
+            old_admin = db.query(_User).filter(_User.is_admin == True).first()
+            if old_admin:
+                old_admin.email = admin_email
+                db.commit()
+                print(f"Admin email updated to: {admin_email}")
+            else:
+                db.add(_User(
+                    email=admin_email,
+                    hashed_password=pwd.hash(admin_password),
+                    name="Admin",
+                    is_admin=True,
+                    target_roles=[],
+                ))
+                db.commit()
+                print(f"Admin user created: {admin_email}")
         elif not existing.is_admin:
             existing.is_admin = True
             db.commit()
