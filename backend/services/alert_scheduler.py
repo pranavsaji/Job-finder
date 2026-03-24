@@ -450,7 +450,11 @@ async def _send_webhook(alert: dict, new_jobs: list):
 # ── Email ──────────────────────────────────────────────────────────────────
 
 def _smtp_configured() -> bool:
-    return bool(os.getenv("RESEND_API_KEY") or (os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASS")))
+    return bool(
+        os.getenv("MAILJET_API_KEY") or
+        os.getenv("RESEND_API_KEY") or
+        (os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"))
+    )
 
 
 def _send_alert_email(
@@ -560,8 +564,22 @@ def _send_alert_email(
         f"View all: {app_url}/jobs\n"
     )
 
+    mailjet_key = os.getenv("MAILJET_API_KEY")
+    mailjet_secret = os.getenv("MAILJET_SECRET_KEY")
     resend_key = os.getenv("RESEND_API_KEY")
-    if resend_key:
+
+    if mailjet_key and mailjet_secret:
+        from mailjet_rest import Client
+        mj = Client(auth=(mailjet_key, mailjet_secret), version="v3.1")
+        mj.send.create(data={"Messages": [{
+            "From": {"Email": "pranavs9876@gmail.com", "Name": "Job Info Finder"},
+            "To": [{"Email": to_email, "Name": to_name or to_email}],
+            "Subject": subject,
+            "HTMLPart": html_body,
+            "TextPart": text_body,
+        }]})
+        log.info("Alert email sent via Mailjet to %s (%d jobs)", to_email, len(jobs))
+    elif resend_key:
         import resend as _resend
         _resend.api_key = resend_key
         _resend.Emails.send({
