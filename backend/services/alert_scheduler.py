@@ -565,7 +565,7 @@ def _send_alert_email(
         import resend as _resend
         _resend.api_key = resend_key
         _resend.Emails.send({
-            "from": f"Job Info Finder <{os.getenv('EMAIL_FROM', 'onboarding@resend.dev')}>",
+            "from": "Job Info Finder <onboarding@resend.dev>",
             "to": [to_email],
             "subject": subject,
             "html": html_body,
