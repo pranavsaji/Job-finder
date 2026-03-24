@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Bell, Plus, Trash2, Play, Loader2, Clock, X, Briefcase,
-  Globe, Timer, MapPin,
+  Globe, Timer, MapPin, Search, ChevronDown, ChevronUp, ExternalLink,
 } from "lucide-react";
 import axios from "axios";
 import toast from "react-hot-toast";
@@ -35,6 +35,19 @@ interface JobResult {
   is_remote?: boolean;
   salary_range?: string;
   matched_role?: string;
+}
+
+interface CollectedJob {
+  id: number;
+  title?: string;
+  company?: string;
+  platform?: string;
+  post_url?: string;
+  location?: string;
+  is_remote?: boolean;
+  salary_range?: string;
+  scraped_at?: string;
+  status?: string;
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -86,6 +99,11 @@ export default function AlertsPage() {
   const [creating, setCreating] = useState(false);
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, JobResult[]>>({});
+  const [collectedJobs, setCollectedJobs] = useState<CollectedJob[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobSearch, setJobSearch] = useState("");
+  const [jobsExpanded, setJobsExpanded] = useState(true);
+  const [platformFilter, setPlatformFilter] = useState<string | null>(null);
 
   // Create form state
   const [newLabel, setNewLabel] = useState("");
@@ -102,7 +120,19 @@ export default function AlertsPage() {
   const token = typeof window !== "undefined" ? localStorage.getItem("jif_token") : "";
   const headers = { Authorization: `Bearer ${token}` };
 
-  useEffect(() => { loadAlerts(); }, []);
+  useEffect(() => { loadAlerts(); loadCollectedJobs(); }, []);
+
+  async function loadCollectedJobs() {
+    setJobsLoading(true);
+    try {
+      const r = await axios.get(`${API}/jobs?per_page=500`, { headers });
+      setCollectedJobs(r.data.jobs || []);
+    } catch {
+      // silent
+    } finally {
+      setJobsLoading(false);
+    }
+  }
 
   async function loadAlerts() {
     try {
@@ -174,6 +204,7 @@ export default function AlertsPage() {
           ? " · no email (0 matches or skipped)"
           : " · SMTP not configured";
       toast.success(`Found ${r.data.count} matches${emailMsg}`, { id: `check-${alert.id}` });
+      loadCollectedJobs();
     } catch {
       toast.error("Check failed", { id: `check-${alert.id}` });
     } finally {
@@ -489,6 +520,100 @@ export default function AlertsPage() {
           })}
         </div>
       )}
+
+      {/* ── Collected Jobs ── */}
+      {(collectedJobs.length > 0 || jobsLoading) && (() => {
+        const platforms = Array.from(new Set(collectedJobs.map(j => j.platform).filter(Boolean))) as string[];
+        const filtered = collectedJobs.filter(j => {
+          const matchesSearch = !jobSearch || [j.title, j.company, j.location].some(
+            f => f?.toLowerCase().includes(jobSearch.toLowerCase())
+          );
+          const matchesPlatform = !platformFilter || j.platform === platformFilter;
+          return matchesSearch && matchesPlatform;
+        });
+
+        return (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-4">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Briefcase size={14} className="text-purple-400" />
+                <span className="text-white/80 text-sm font-semibold">Collected Jobs</span>
+                <span className="text-xs px-2 py-0.5 rounded-full"
+                  style={{ background: "rgba(139,92,246,0.15)", border: "1px solid rgba(139,92,246,0.3)", color: "#c4b5fd" }}>
+                  {collectedJobs.length} total
+                </span>
+              </div>
+              <button onClick={() => setJobsExpanded(p => !p)} className="text-white/30 hover:text-white/60">
+                {jobsExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              </button>
+            </div>
+
+            {jobsExpanded && (
+              <>
+                {/* Search + platform filters */}
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <div className="relative flex-1 min-w-[160px]">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/30" />
+                    <input
+                      value={jobSearch}
+                      onChange={e => setJobSearch(e.target.value)}
+                      placeholder="Search title, company…"
+                      className="input-field pl-7 py-1.5 text-xs w-full"
+                    />
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    <button onClick={() => setPlatformFilter(null)}
+                      className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${!platformFilter ? "bg-purple-600/20 border-purple-500/40 text-purple-300" : "border-white/10 text-white/35 hover:text-white/60"}`}>
+                      All
+                    </button>
+                    {platforms.map(p => (
+                      <button key={p} onClick={() => setPlatformFilter(platformFilter === p ? null : p)}
+                        className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${platformFilter === p ? "bg-purple-600/20 border-purple-500/40 text-purple-300" : "border-white/10 text-white/35 hover:text-white/60"}`}>
+                        {PLATFORM_LABELS[p] || p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Job rows */}
+                {jobsLoading ? (
+                  <div className="space-y-2">
+                    {[1,2,3].map(i => <div key={i} className="skeleton h-10 rounded-lg" />)}
+                  </div>
+                ) : filtered.length === 0 ? (
+                  <p className="text-white/30 text-xs text-center py-4">No jobs match your filter.</p>
+                ) : (
+                  <div className="space-y-1 max-h-[420px] overflow-y-auto pr-1">
+                    {filtered.slice(0, 200).map(job => (
+                      <div key={job.id} className="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-white/4 transition-colors group">
+                        <Briefcase size={11} className="text-white/20 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-white/70 text-xs font-medium truncate block">
+                            {job.title || "Untitled"}{job.company ? ` — ${job.company}` : ""}
+                          </span>
+                          <span className="text-white/25 text-xs">
+                            {[job.platform ? (PLATFORM_LABELS[job.platform] || job.platform) : null, job.location, job.is_remote ? "Remote" : null, job.salary_range].filter(Boolean).join(" · ")}
+                          </span>
+                        </div>
+                        {job.post_url && (
+                          <a href={job.post_url} target="_blank" rel="noopener noreferrer"
+                            className="opacity-0 group-hover:opacity-100 transition-opacity text-purple-400 hover:text-purple-300 flex-shrink-0">
+                            <ExternalLink size={12} />
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                    {filtered.length > 200 && (
+                      <p className="text-white/25 text-xs text-center py-2">Showing 200 of {filtered.length} — use search to narrow down</p>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </motion.div>
+        );
+      })()}
     </div>
   );
 }
