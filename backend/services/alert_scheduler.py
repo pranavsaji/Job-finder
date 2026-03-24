@@ -450,7 +450,7 @@ async def _send_webhook(alert: dict, new_jobs: list):
 # ── Email ──────────────────────────────────────────────────────────────────
 
 def _smtp_configured() -> bool:
-    return bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASS"))
+    return bool(os.getenv("RESEND_API_KEY") or (os.getenv("SMTP_HOST") and os.getenv("SMTP_USER") and os.getenv("SMTP_PASS")))
 
 
 def _send_alert_email(
@@ -560,30 +560,41 @@ def _send_alert_email(
         f"View all: {app_url}/jobs\n"
     )
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"Job Info Finder <{os.getenv('EMAIL_FROM', os.getenv('SMTP_USER'))}>"
-    msg["To"] = f"{to_name} <{to_email}>"
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
-
-    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER", "")
-    smtp_pass = os.getenv("SMTP_PASS", "")
-
-    try:
+    resend_key = os.getenv("RESEND_API_KEY")
+    if resend_key:
+        import resend as _resend
+        _resend.api_key = resend_key
+        _resend.Emails.send({
+            "from": f"Job Info Finder <{os.getenv('EMAIL_FROM', 'onboarding@resend.dev')}>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html_body,
+            "text": text_body,
+        })
+        log.info("Alert email sent via Resend to %s (%d jobs)", to_email, len(jobs))
+    else:
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_user = os.getenv("SMTP_USER", "")
+        smtp_pass = os.getenv("SMTP_PASS", "")
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"Job Info Finder <{os.getenv('EMAIL_FROM', smtp_user)}>"
+        msg["To"] = f"{to_name} <{to_email}>"
+        msg.attach(MIMEText(text_body, "plain"))
+        msg.attach(MIMEText(html_body, "html"))
         try:
-            import certifi
-            context = ssl.create_default_context(cafile=certifi.where())
-        except ImportError:
-            context = ssl.create_default_context()
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, [to_email], msg.as_string())
-        log.info("Alert email sent to %s (%d jobs)", to_email, len(jobs))
-    except Exception as e:
-        log.error("Failed to send alert email to %s: %s", to_email, e)
-        raise
+            try:
+                import certifi
+                context = ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                context = ssl.create_default_context()
+            with smtplib.SMTP(host, port, timeout=15) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, [to_email], msg.as_string())
+            log.info("Alert email sent via SMTP to %s (%d jobs)", to_email, len(jobs))
+        except Exception as e:
+            log.error("Failed to send alert email to %s: %s", to_email, e)
+            raise
