@@ -6,6 +6,7 @@ import AppShell from "@/components/AppShell";
 export const metadata: Metadata = {
   title: "Job Info Finder",
   description: "AI-powered job hunting intelligence platform",
+  themeColor: "#7c3aed",
 };
 
 export default function RootLayout({

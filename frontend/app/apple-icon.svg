@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#312e81"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#c4b5fd" stop-opacity="0.85"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="32" height="32" rx="7" fill="url(#bg)"/>
+
+  <!-- Subtle inner glow -->
+  <rect width="32" height="32" rx="7" fill="url(#bg)" opacity="0.4"/>
+
+  <!-- Briefcase handle -->
+  <path d="M12 13V11a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" fill="none" stroke="url(#shine)" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Briefcase body -->
+  <rect x="5" y="13" width="22" height="14" rx="2.5" fill="url(#shine)"/>
+
+  <!-- Center divider line -->
+  <line x1="5" y1="20" x2="27" y2="20" stroke="url(#bg)" stroke-width="1.5"/>
+
+  <!-- Latch knob -->
+  <rect x="13.5" y="18.5" width="5" height="3" rx="1.5" fill="url(#bg)"/>
+</svg>
