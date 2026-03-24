@@ -402,7 +402,11 @@ async def _check_followups():
 
                 try:
                     import ssl as _ssl
-                    context = _ssl.create_default_context()
+                    try:
+                        import certifi
+                        context = _ssl.create_default_context(cafile=certifi.where())
+                    except ImportError:
+                        context = _ssl.create_default_context()
                     with smtplib.SMTP(host, port, timeout=15) as server:
                         server.ehlo()
                         server.starttls(context=context)
@@ -569,7 +573,11 @@ def _send_alert_email(
     smtp_pass = os.getenv("SMTP_PASS", "")
 
     try:
-        context = ssl.create_default_context()
+        try:
+            import certifi
+            context = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            context = ssl.create_default_context()
         with smtplib.SMTP(host, port, timeout=15) as server:
             server.ehlo()
             server.starttls(context=context)
@@ -578,3 +586,4 @@ def _send_alert_email(
         log.info("Alert email sent to %s (%d jobs)", to_email, len(jobs))
     except Exception as e:
         log.error("Failed to send alert email to %s: %s", to_email, e)
+        raise

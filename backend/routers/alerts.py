@@ -157,20 +157,23 @@ async def check_alert(
 
     # Always send email on manual check (if jobs found and SMTP configured)
     if serialized and _smtp_configured():
-        _send_alert_email(
-            to_email=current_user.email,
-            to_name=current_user.name or "",
-            alert_label=alert.get("label", ", ".join(roles[:2])),
-            roles=roles,
-            jobs=serialized,
-            countries=countries,
-            email_interval_hours=alert.get("email_interval_hours", 24),
-        )
-        # Update last_emailed_at in DB
-        last_emailed_at = now_iso
-        from backend.services.alert_scheduler import _update_prefs
-        _update_prefs(current_user.id, alert_id, {"last_emailed_at": last_emailed_at})
-        email_sent = True
+        try:
+            _send_alert_email(
+                to_email=current_user.email,
+                to_name=current_user.name or "",
+                alert_label=alert.get("label", ", ".join(roles[:2])),
+                roles=roles,
+                jobs=serialized,
+                countries=countries,
+                email_interval_hours=alert.get("email_interval_hours", 24),
+            )
+            # Update last_emailed_at in DB
+            last_emailed_at = now_iso
+            from backend.services.alert_scheduler import _update_prefs
+            _update_prefs(current_user.id, alert_id, {"last_emailed_at": last_emailed_at})
+            email_sent = True
+        except Exception as e:
+            print(f"check_alert {alert_id}: email failed: {e}")
 
     return {
         "alert_id": alert_id,
