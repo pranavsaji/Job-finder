@@ -171,6 +171,11 @@ function JobsPageContent() {
     "hn",
     "remoteok",
     "yc",
+    "greenhouse",
+    "lever",
+    "ashby",
+    "workable",
+    "workday",
   ]);
   const [scrapeDatePreset, setScrapeDatePreset] = useState<string>("7d");
   const [scrapeDateFrom, setScrapeDateFrom] = useState("");
@@ -305,10 +310,14 @@ function JobsPageContent() {
         { id: "remoteok", label: "RemoteOK", tip: "Remote jobs via public API — exact dates" },
         { id: "yc", label: "YC Jobs", tip: "Y Combinator backed startups (workatastartup.com)" },
         { id: "wellfound", label: "Wellfound", tip: "AngelList startup jobs" },
-        { id: "jobboards", label: "Job Boards", tip: "Greenhouse, Lever, Ashby, Workable, Rippling, Jobvite — real posting dates via ATS APIs" },
+        { id: "greenhouse", label: "Greenhouse", tip: "boards.greenhouse.io — real posting dates via API" },
+        { id: "lever", label: "Lever", tip: "jobs.lever.co — real posting dates via API" },
+        { id: "ashby", label: "Ashby HQ", tip: "jobs.ashbyhq.com — fast-growing startups" },
+        { id: "workable", label: "Workable", tip: "apply.workable.com — SMBs and startups" },
+        { id: "workday", label: "Workday", tip: "myworkdayjobs.com — enterprise companies" },
       ],
       buttonLabel: "Find Job Listings",
-      toastMsg: "Pulling job listings from RemoteOK, YC, Wellfound, Greenhouse, Lever and more...",
+      toastMsg: "Pulling job listings from RemoteOK, YC, Wellfound, Greenhouse, Lever, Ashby, Workable, Workday...",
     },
     funded: {
       title: "Find Funded Companies",
