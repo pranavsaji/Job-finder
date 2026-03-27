@@ -388,3 +388,170 @@ def _extract_skills(text: str) -> list:
               "Kubernetes", "AWS", "GCP", "SQL", "Machine Learning", "AI", "LLM",
               "Node.js", "FastAPI", "Django", "Swift", "Kotlin", "C++"]
     return [s for s in skills if re.search(r"\b" + re.escape(s) + r"\b", text, re.IGNORECASE)][:4]
+
+
+# ─── Individual ATS scrapers ──────────────────────────────────────────────────
+
+def _ddg_single_ats(platform_name: str, domain: str, roles: list, country, limit: int) -> list:
+    """DDG search focused on one ATS domain, multiple query variants for exhaustive results."""
+    country_q = f' "{country}"' if country else ""
+    per_q = max(25, limit)
+    jobs = []
+    seen_urls: set = set()
+
+    for role in roles[:3]:
+        queries = [
+            f'site:{domain} "{role}"{country_q}',
+            f'site:{domain} {role}{country_q}',
+            f'site:{domain} {role} jobs{country_q}',
+        ]
+        for query in queries:
+            results = _ddgs_search(query, max_results=per_q)
+            for r in results:
+                url = r.get("href", "")
+                if not url or url in seen_urls:
+                    continue
+                # Accept if domain appears anywhere in URL (handles subdomains like company.wd5.myworkdayjobs.com)
+                if domain not in url:
+                    continue
+                seen_urls.add(url)
+                title_raw = r.get("title", "")
+                body = r.get("body", "")
+                combined = f"{title_raw} {body}"
+                company = _extract_company_from_url_extended(url, domain)
+                clean_title = _clean_job_title(title_raw, role, company)
+                jobs.append({
+                    "title": clean_title,
+                    "company": company,
+                    "poster_name": None,
+                    "poster_title": "Hiring Manager",
+                    "poster_profile_url": None,
+                    "poster_linkedin": None,
+                    "post_url": url,
+                    "platform": platform_name,
+                    "post_content": combined[:2000],
+                    "posted_at": _parse_date_hint(body),
+                    "location": _extract_location(combined),
+                    "job_type": "full-time",
+                    "is_remote": "remote" in combined.lower(),
+                    "tags": [role, platform_name] + _extract_skills(combined),
+                    "matched_role": role,
+                    "salary_range": _extract_salary(combined),
+                })
+            time.sleep(0.4)
+            if len(jobs) >= limit * 2:
+                break
+
+    return jobs
+
+
+def _extract_company_from_url_extended(url: str, domain: str) -> Optional[str]:
+    """Extract company from URL including Workday subdomain pattern."""
+    # Workday: company.wd5.myworkdayjobs.com
+    if "myworkdayjobs.com" in url:
+        m = re.match(r"https?://([^.]+)\.", url)
+        if m and m.group(1) not in ("www", "jobs"):
+            return m.group(1).replace("-", " ").replace("_", " ").title()
+    return _extract_company_from_url(url)
+
+
+async def _enrich_jobs_with_fn(jobs: list, enrich_fn) -> list:
+    """Apply async date enrichment function to a list of jobs."""
+    async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True) as client:
+        tasks = [enrich_fn(j.get("post_url", ""), client) for j in jobs]
+        dates = await asyncio.gather(*tasks, return_exceptions=True)
+    enriched = []
+    for job, dt in zip(jobs, dates):
+        if isinstance(dt, datetime) and dt:
+            job = {**job, "posted_at": dt}
+        enriched.append(job)
+    return enriched
+
+
+def _apply_date_filter_and_dedup(jobs: list, date_from, limit: int) -> list:
+    """Filter by date_from (keep unknowns), deduplicate by URL, sort newest first, cap at limit."""
+    if date_from:
+        df = date_from if date_from.tzinfo else date_from.replace(tzinfo=timezone.utc)
+        filtered = []
+        for j in jobs:
+            pd = j.get("posted_at")
+            if not pd:
+                filtered.append(j)
+                continue
+            if isinstance(pd, str):
+                try:
+                    pd = datetime.fromisoformat(pd)
+                except Exception:
+                    filtered.append(j)
+                    continue
+            if pd.tzinfo is None:
+                pd = pd.replace(tzinfo=timezone.utc)
+            if pd >= df:
+                filtered.append(j)
+        jobs = filtered
+
+    seen: set = set()
+    unique = []
+    for j in jobs:
+        url = j.get("post_url", "")
+        if url and url not in seen:
+            seen.add(url)
+            unique.append(j)
+
+    unique.sort(
+        key=lambda j: j.get("posted_at") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return unique[:limit]
+
+
+async def scrape_greenhouse_jobs(
+    roles: list, country=None, date_from=None, date_to=None,
+    limit_per_platform: int = 10, date_preset=None,
+) -> list:
+    jobs = await asyncio.get_event_loop().run_in_executor(
+        None, _ddg_single_ats, "greenhouse", "boards.greenhouse.io", roles, country, limit_per_platform
+    )
+    jobs = await _enrich_jobs_with_fn(jobs, _enrich_greenhouse_url)
+    return _apply_date_filter_and_dedup(jobs, date_from, limit_per_platform)
+
+
+async def scrape_lever_jobs(
+    roles: list, country=None, date_from=None, date_to=None,
+    limit_per_platform: int = 10, date_preset=None,
+) -> list:
+    jobs = await asyncio.get_event_loop().run_in_executor(
+        None, _ddg_single_ats, "lever", "jobs.lever.co", roles, country, limit_per_platform
+    )
+    jobs = await _enrich_jobs_with_fn(jobs, _enrich_lever_url)
+    return _apply_date_filter_and_dedup(jobs, date_from, limit_per_platform)
+
+
+async def scrape_ashby_jobs(
+    roles: list, country=None, date_from=None, date_to=None,
+    limit_per_platform: int = 10, date_preset=None,
+) -> list:
+    jobs = await asyncio.get_event_loop().run_in_executor(
+        None, _ddg_single_ats, "ashby", "jobs.ashbyhq.com", roles, country, limit_per_platform
+    )
+    return _apply_date_filter_and_dedup(jobs, date_from, limit_per_platform)
+
+
+async def scrape_workable_jobs(
+    roles: list, country=None, date_from=None, date_to=None,
+    limit_per_platform: int = 10, date_preset=None,
+) -> list:
+    jobs = await asyncio.get_event_loop().run_in_executor(
+        None, _ddg_single_ats, "workable", "apply.workable.com", roles, country, limit_per_platform
+    )
+    return _apply_date_filter_and_dedup(jobs, date_from, limit_per_platform)
+
+
+async def scrape_workday_jobs(
+    roles: list, country=None, date_from=None, date_to=None,
+    limit_per_platform: int = 10, date_preset=None,
+) -> list:
+    jobs = await asyncio.get_event_loop().run_in_executor(
+        None, _ddg_single_ats, "workday", "myworkdayjobs.com", roles, country, limit_per_platform
+    )
+    return _apply_date_filter_and_dedup(jobs, date_from, limit_per_platform)

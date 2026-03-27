@@ -47,7 +47,7 @@ const DEFAULT_FILTERS: FilterState = {
 };
 
 const POST_PLATFORMS = ["linkedin", "twitter", "reddit", "hn", "newsletter"];
-const LISTING_PLATFORMS = ["remoteok", "yc", "wellfound", "jobboards"];
+const LISTING_PLATFORMS = ["remoteok", "yc", "wellfound", "greenhouse", "lever", "ashby", "workable", "workday"];
 const FUNDED_PLATFORMS = ["funded"];
 
 function getCategoryPlatforms(cat: string): string[] {

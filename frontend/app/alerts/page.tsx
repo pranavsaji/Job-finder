@@ -52,7 +52,9 @@ interface CollectedJob {
 
 const PLATFORM_LABELS: Record<string, string> = {
   linkedin: "LinkedIn", twitter: "Twitter", reddit: "Reddit", hn: "HN",
-  remoteok: "RemoteOK", yc: "YC", wellfound: "Wellfound", jobboards: "Job Boards",
+  remoteok: "RemoteOK", yc: "YC", wellfound: "Wellfound",
+  greenhouse: "Greenhouse", lever: "Lever", ashby: "Ashby HQ",
+  workable: "Workable", workday: "Workday",
   newsletter: "Newsletter", funded: "Funded",
 };
 
@@ -115,7 +117,7 @@ export default function AlertsPage() {
   const [countryInput, setCountryInput] = useState("");
   const [showCountrySuggestions, setShowCountrySuggestions] = useState(false);
 
-  const ALL_PLATFORMS = ["linkedin", "twitter", "reddit", "hn", "remoteok", "yc", "wellfound", "jobboards", "newsletter"];
+  const ALL_PLATFORMS = ["linkedin", "twitter", "reddit", "hn", "remoteok", "yc", "wellfound", "greenhouse", "lever", "ashby", "workable", "workday", "newsletter"];
 
   const token = typeof window !== "undefined" ? localStorage.getItem("jif_token") : "";
   const headers = { Authorization: `Bearer ${token}` };

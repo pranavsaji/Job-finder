@@ -14,6 +14,14 @@ const PLATFORMS = [
   { value: "twitter", label: "Twitter/X" },
   { value: "reddit", label: "Reddit" },
   { value: "hn", label: "Hacker News" },
+  { value: "remoteok", label: "RemoteOK" },
+  { value: "wellfound", label: "Wellfound" },
+  { value: "greenhouse", label: "Greenhouse" },
+  { value: "lever", label: "Lever" },
+  { value: "ashby", label: "Ashby HQ" },
+  { value: "workable", label: "Workable" },
+  { value: "workday", label: "Workday" },
+  { value: "yc", label: "YC" },
 ];
 
 const STATUSES = [
